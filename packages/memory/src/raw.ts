@@ -1,14 +1,17 @@
-import { Message } from 'xsai'
+import { ModelMessage } from 'ai'
 import { MemoryUnit } from './memory-unit'
 
-export const rawMessages = (messages: Message[]) => {
+export const rawMessages = (messages: ModelMessage[]) => {
   return messages.map((message) => {
     if (message.role === 'user') {
+      if (Array.isArray(message.content)) {
+        return `User: ${message.content.filter(c => c.type === 'text').map(c => c.text).join('\n')}`
+      }
       return `User: ${message.content}`
     } else if (message.role === 'assistant') {
       let toolCalls = ''
-      if (message.tool_calls && message.tool_calls.length !== 0) {
-        toolCalls = `Tool Calls: ${message.tool_calls.map(t => t.function.name).join(', ')}`
+      if (Array.isArray(message.content)) {
+        toolCalls = message.content.filter(c => c.type === 'tool-call').map(c => c.toolName).join(', ')
       }
       return `You: ${message.content} \n${toolCalls}`
     } else if (message.role === 'tool') {
@@ -21,7 +24,7 @@ export const rawMessages = (messages: Message[]) => {
   .join('\n\n')
 }
 
-export const rawMemory = (memory: MemoryUnit, locale: Intl.LocalesArgument) => {
+export const rawMemory = (memory: MemoryUnit, locale?: Intl.LocalesArgument) => {
   return `
   ---
   date: ${memory.timestamp.toLocaleDateString(locale)}

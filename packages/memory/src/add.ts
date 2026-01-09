@@ -6,7 +6,7 @@ import { db } from '@memohome/db'
 import { memory } from '@memohome/db/schema'
 
 export interface AddMemoryParams extends EmbedParams {
-  locale: Intl.LocalesArgument
+  locale?: Intl.LocalesArgument
 }
 
 export interface AddMemoryInput {
@@ -24,6 +24,7 @@ export const createAddMemory = (params: AddMemoryParams) =>
     })
     await db.insert(memory)
       .values({
+        id: crypto.randomUUID(),
         timestamp: memoryUnit.timestamp,
         user: memoryUnit.user,
         rawContent,

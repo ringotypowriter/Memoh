@@ -1,7 +1,7 @@
-import { Message } from 'xsai'
+import { ModelMessage } from 'ai'
 
 export interface MemoryUnit {
-  messages: Message[]
+  messages: ModelMessage[]
   timestamp: Date
   user: string
   raw: string

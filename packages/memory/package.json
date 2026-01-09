@@ -14,7 +14,9 @@
   "license": "ISC",
   "packageManager": "pnpm@10.27.0",
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.7",
     "@memohome/db": "workspace:*",
+    "ai": "^6.0.25",
     "drizzle-orm": "^0.45.1",
     "xsai": "^0.4.1"
   }
