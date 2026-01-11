@@ -54,6 +54,20 @@ export {
   type ModelListItem,
 } from './model'
 
+// Platform
+export {
+  listPlatforms,
+  createPlatform,
+  getPlatform,
+  updatePlatform,
+  updatePlatformConfig,
+  deletePlatform,
+  activatePlatform,
+  inactivatePlatform,
+  type CreatePlatformParams,
+  type PlatformListItem,
+} from './platform'
+
 // Agent
 export {
   chat,

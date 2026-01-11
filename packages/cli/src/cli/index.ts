@@ -5,6 +5,7 @@ import chalk from 'chalk'
 import { authCommands } from './commands/auth'
 import { userCommands } from './commands/user'
 import { modelCommands } from './commands/model'
+import { platformCommands } from './commands/platform'
 import { agentCommands, startInteractiveMode } from './commands/agent'
 import { memoryCommands } from './commands/memory'
 import { configCommands } from './commands/config'
@@ -29,6 +30,10 @@ userCommands(user)
 // Model management commands
 const model = program.command('model').description('AI model configuration management')
 modelCommands(model)
+
+// Platform management commands
+const platform = program.command('platform').description('Platform configuration management')
+platformCommands(platform)
 
 // Agent conversation commands
 const agent = program.command('agent').description('Chat with AI Agent')

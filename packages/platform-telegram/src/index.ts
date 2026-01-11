@@ -18,6 +18,7 @@ export class TelegramPlatform extends BasePlatform {
   config = z.object({
     botToken: z.string(),
   })
+  port = 7101
   
   private bot?: Telegraf
   redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379')
