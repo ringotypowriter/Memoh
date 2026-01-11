@@ -38,6 +38,7 @@ export const platformModule = new Elysia({
         active: platform.active,
       })
     }
+    console.log('platforms', platforms)
   })
   .get('/', async ({ query }) => {
     try {

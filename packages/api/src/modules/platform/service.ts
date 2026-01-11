@@ -136,9 +136,6 @@ export const updatePlatformConfig = async (id: string, config: Record<string, un
 // active
 
 export const activePlatform = async (platform: Platform) => {
-  if (platform.active) {
-    return
-  }
   await fetch(path.join(platform.endpoint, '/start'), {
     method: 'POST',
     body: JSON.stringify(platform.config),
@@ -149,9 +146,6 @@ export const activePlatform = async (platform: Platform) => {
 }
 
 export const inactivePlatform = async (platform: Platform) => {
-  if (!platform.active) {
-    return
-  }
   await fetch(path.join(platform.endpoint, '/stop'), {
     method: 'POST',
     headers: {
