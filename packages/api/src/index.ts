@@ -10,6 +10,7 @@ import {
   platformModule,
   memoryModule,
   mcpModule,
+  containerModule,
 } from './modules'
 import openapi from '@elysiajs/openapi'
 
@@ -28,6 +29,7 @@ export const app = new Elysia()
   .use(userModule)
   .use(platformModule)
   .use(mcpModule)
+  .use(containerModule)
   .listen(port)
 
 console.log(

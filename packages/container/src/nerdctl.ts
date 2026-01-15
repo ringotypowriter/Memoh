@@ -1,38 +1,37 @@
 /**
- * Containerd client implementation using ctr CLI
+ * Nerdctl client implementation (Docker-compatible CLI for containerd)
  */
 
 import { execa } from 'execa'
 import type { ContainerConfig, ContainerInfo, ContainerStatus, ContainerdOptions } from './types'
 
-
 /**
- * Containerd client for managing containers
+ * Nerdctl client for managing containers
+ * Provides a Docker-like interface for containerd
  */
-export class ContainerdClient {
+export class NerdctlClient {
   private namespace: string
   private socket?: string
   private timeout: number
-  private ctrCommand: string
+  nerdctlCommand: string[]
 
   constructor(options: ContainerdOptions = {}) {
     this.namespace = options.namespace || 'default'
     this.socket = options.socket || process.env.CONTAINERD_SOCKET
     this.timeout = options.timeout || 30000
-    this.ctrCommand = options.ctrCommand || process.env.CTR_COMMAND || 'ctr'
-  }
-
-  buildExecCommand(name: string, command: string[]): string[] {
-    return this.buildCtrCommand(['task', 'exec', '--exec-id', `exec-${Date.now()}`, name, ...command])
+    // Support commands like "lima nerdctl"
+    const rawCommand = options.ctrCommand || process.env.CTR_COMMAND || 'nerdctl'
+    this.nerdctlCommand = rawCommand.split(' ').filter(part => part.length > 0)
   }
 
   /**
-   * Build ctr command with options
+   * Build nerdctl command with global options
    */
-  buildCtrCommand(args: string[]): string[] {
-    // Split ctrCommand and filter out empty strings (supports "lima sudo ctr")
-    const cmd = this.ctrCommand.split(' ').filter(part => part.length > 0)
+  private buildCommand(args: string[]): string[] {
+    // Split command to support "lima nerdctl"
+    const cmd = [...this.nerdctlCommand]
     
+    // Add global options before the subcommand
     if (this.socket) {
       cmd.push('--address', this.socket)
     }
@@ -44,10 +43,10 @@ export class ContainerdClient {
   }
 
   /**
-   * Execute ctr command
+   * Execute nerdctl command
    */
   private async exec(args: string[]): Promise<{ stdout: string; stderr: string }> {
-    const cmd = this.buildCtrCommand(args)
+    const cmd = this.buildCommand(args)
     const [program, ...programArgs] = cmd
     
     try {
@@ -61,7 +60,7 @@ export class ContainerdClient {
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      throw new Error(`Containerd command failed: ${message}`)
+      throw new Error(`Nerdctl command failed: ${message}`)
     }
   }
 
@@ -69,7 +68,7 @@ export class ContainerdClient {
    * Pull container image
    */
   async pullImage(image: string): Promise<void> {
-    await this.exec(['image', 'pull', image])
+    await this.exec(['pull', image])
   }
 
   /**
@@ -78,20 +77,41 @@ export class ContainerdClient {
   async createContainer(config: ContainerConfig): Promise<ContainerInfo> {
     const args = ['container', 'create']
     
-    // Add mounts if specified
+    // Add container name
+    args.push('--name', config.name)
+    
+    // Add environment variables
+    if (config.env) {
+      for (const [key, value] of Object.entries(config.env)) {
+        args.push('--env', `${key}=${value}`)
+      }
+    }
+    
+    // Add working directory
+    if (config.workingDir) {
+      args.push('--workdir', config.workingDir)
+    }
+    
+    // Add labels
+    if (config.labels) {
+      for (const [key, value] of Object.entries(config.labels)) {
+        args.push('--label', `${key}=${value}`)
+      }
+    }
+    
+    // Add mounts (nerdctl uses Docker-style mount syntax)
     if (config.mounts && config.mounts.length > 0) {
       for (const mount of config.mounts) {
-        // ctr uses 'src' and 'dst' instead of 'source' and 'target'
-        const mountStr = `type=${mount.type},src=${mount.source},dst=${mount.target}${mount.readonly ? ',readonly' : ''}`
+        let mountStr = `type=${mount.type},src=${mount.source},dst=${mount.target}`
+        if (mount.readonly) {
+          mountStr += ',readonly'
+        }
         args.push('--mount', mountStr)
       }
     }
     
     // Add image
     args.push(config.image)
-    
-    // Add container name
-    args.push(config.name)
     
     // Add command if specified
     if (config.command && config.command.length > 0) {
@@ -108,69 +128,92 @@ export class ContainerdClient {
    * Start a container
    */
   async startContainer(name: string): Promise<void> {
-    await this.exec(['task', 'start', '--detach', name])
+    // Check container status and handle accordingly
+    try {
+      const status = await this.getContainerStatus(name)
+      
+      if (status === 'running') {
+        console.log(`Container ${name} is already running`)
+        return
+      }
+      
+      if (status === 'paused') {
+        console.log(`Container ${name} is paused, unpausing first...`)
+        await this.exec(['unpause', name])
+        return
+      }
+      
+      // For 'created' or 'stopped' status, we can start
+    } catch {
+      // Container might not exist, let start command handle it
+    }
+    
+    await this.exec(['start', name])
   }
 
   /**
    * Stop a container
    */
   async stopContainer(name: string, timeout: number = 10): Promise<void> {
+    // Check if container is running
     try {
-      await this.exec(['task', 'kill', '--signal', 'SIGTERM', name])
-      
-      // Wait for graceful shutdown
-      await new Promise(resolve => setTimeout(resolve, timeout * 1000))
-      
-      // Force kill if still running
-      try {
-        await this.exec(['task', 'kill', '--signal', 'SIGKILL', name])
-      } catch {
-        // Container might have already stopped
+      const status = await this.getContainerStatus(name)
+      if (status !== 'running') {
+        console.log(`Container ${name} is not running (status: ${status})`)
+        return
       }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : ''
-      if (!message.includes('not found')) {
-        throw error
-      }
+    } catch {
+      // Container might not exist, let stop command handle it
     }
+    
+    await this.exec(['stop', '--time', timeout.toString(), name])
   }
 
   /**
    * Pause a container
    */
   async pauseContainer(name: string): Promise<void> {
-    await this.exec(['task', 'pause', name])
+    // Check if container is running before pausing
+    const status = await this.getContainerStatus(name)
+    if (status !== 'running') {
+      console.log(`Container ${name} cannot be paused (status: ${status})`)
+      return
+    }
+    
+    await this.exec(['pause', name])
   }
 
   /**
    * Resume a paused container
    */
   async resumeContainer(name: string): Promise<void> {
-    await this.exec(['task', 'resume', name])
+    // Check if container is paused before resuming
+    const status = await this.getContainerStatus(name)
+    if (status !== 'paused') {
+      console.log(`Container ${name} is not paused (status: ${status})`)
+      return
+    }
+    
+    await this.exec(['unpause', name])
   }
 
   /**
    * Remove a container
    */
   async removeContainer(name: string, force: boolean = false): Promise<void> {
+    const args = ['rm']
     if (force) {
-      // Try to stop the task first
-      try {
-        await this.exec(['task', 'kill', '--signal', 'SIGKILL', name])
-        await this.exec(['task', 'delete', name])
-      } catch {
-        // Task might not exist
-      }
+      args.push('--force')
     }
-    
-    await this.exec(['container', 'delete', name])
+    args.push(name)
+    await this.exec(args)
   }
 
   /**
    * Execute command in container
    */
   async execInContainer(name: string, command: string[]): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-    const args = this.buildExecCommand(name, command)
+    const args = ['exec', name, ...command]
     
     try {
       const result = await this.exec(args)
@@ -193,19 +236,21 @@ export class ContainerdClient {
    * Get container information
    */
   async getContainerInfo(name: string): Promise<ContainerInfo> {
-    const result = await this.exec(['container', 'info', name])
+    const result = await this.exec(['inspect', name])
     
     try {
-      const info = JSON.parse(result.stdout)
+      const data = JSON.parse(result.stdout)
+      const info = Array.isArray(data) ? data[0] : data
       
+      // Parse nerdctl inspect output (similar to Docker)
       return {
-        id: info.ID || name,
-        name: name,
-        image: info.Image || '',
-        status: await this.getContainerStatus(name),
+        id: info.Id || name,
+        name: info.Name?.replace(/^\//, '') || name,
+        image: info.Config?.Image || info.Image || '',
+        status: this.parseStatus(info.State),
         namespace: this.namespace,
-        createdAt: info.CreatedAt ? new Date(info.CreatedAt) : new Date(),
-        labels: info.Labels || {},
+        createdAt: info.Created ? new Date(info.Created) : new Date(),
+        labels: info.Config?.Labels || {},
       }
     } catch {
       // Fallback if JSON parsing fails
@@ -221,23 +266,27 @@ export class ContainerdClient {
   }
 
   /**
+   * Parse container status from inspect output
+   */
+  private parseStatus(state: unknown): ContainerStatus {
+    const s = state as { Running?: boolean; Paused?: boolean; Status?: string; Dead?: boolean }
+    if (!s) return 'unknown'
+    
+    if (s.Running) return 'running'
+    if (s.Paused) return 'paused'
+    if (s.Status === 'created') return 'created'
+    if (s.Status === 'exited' || s.Dead) return 'stopped'
+    
+    return 'unknown'
+  }
+
+  /**
    * Get container status
    */
   async getContainerStatus(name: string): Promise<ContainerStatus> {
     try {
-      const result = await this.exec(['task', 'list'])
-      const lines = result.stdout.split('\n')
-      
-      for (const line of lines) {
-        if (line.includes(name)) {
-          if (line.includes('RUNNING')) return 'running'
-          if (line.includes('PAUSED')) return 'paused'
-          if (line.includes('STOPPED')) return 'stopped'
-        }
-      }
-      
-      // Container exists but no task
-      return 'created'
+      const info = await this.getContainerInfo(name)
+      return info.status
     } catch {
       return 'unknown'
     }
@@ -248,7 +297,7 @@ export class ContainerdClient {
    */
   async getContainerLogs(name: string): Promise<string> {
     try {
-      const result = await this.exec(['task', 'logs', name])
+      const result = await this.exec(['logs', name])
       return result.stdout
     } catch (error: unknown) {
       return error instanceof Error ? error.message : ''
@@ -259,7 +308,7 @@ export class ContainerdClient {
    * List all containers
    */
   async listContainers(): Promise<ContainerInfo[]> {
-    const result = await this.exec(['container', 'list', '--quiet'])
+    const result = await this.exec(['ps', '--all', '--format', '{{.Names}}'])
     const containerNames = result.stdout.split('\n').filter(name => name.trim())
     
     const containers: ContainerInfo[] = []

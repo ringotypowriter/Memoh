@@ -32,10 +32,14 @@ export const createAgent = (params: AgentParams) => {
           }
         })
       } else if (connection.type === 'stdio') {
+        // Build exec command for container execution
+        const commands = params.onBuildExecCommand?.([connection.command]) ?? [connection.command]
+        commands.push(...connection.args)
+        const [command, ...args] = commands
         return await createMCPClient({
           transport: new StdioClientTransport({
-            command: connection.command,
-            args: connection.args,
+            command,
+            args,
             env: connection.env,
             cwd: connection.cwd,
           }),
@@ -123,35 +127,54 @@ export const createAgent = (params: AgentParams) => {
   }
 
   async function* ask(input: string) {
-    await loadContext()
-    const user = {
-      role: 'user',
-      content: input,
-    } as UserModelMessage
-    messages.push(user)
-    const { fullStream, response } = streamText({
-      model: gateway,
-      system: getSystemPrompt(),
-      prepareStep: async () => {
-        return {
-          system: getSystemPrompt(),
+    try {
+      await loadContext()
+      const user = {
+        role: 'user',
+        content: input,
+      } as UserModelMessage
+      messages.push(user)
+      const { fullStream, response } = streamText({
+        model: gateway,
+        system: getSystemPrompt(),
+        prepareStep: async () => {
+          return {
+            system: getSystemPrompt(),
+          }
+        },
+        stopWhen: stepCountIs(10),
+        messages,
+        tools: await getTools(),
+        onFinish: async () => {
+          await onComplete()
+        },
+      })
+      for await (const event of fullStream) {
+        yield event
+      }
+      
+      // Wait for response and save to memory
+      try {
+        const newMessages = (await response).messages
+        await params.onFinish?.([
+          user as ModelMessage,
+          ...newMessages,
+        ])
+      } catch (finishError) {
+        console.error('Error in onFinish callback:', finishError)
+        // Yield error event but don't throw - let the stream complete
+        yield {
+          type: 'error' as const,
+          error: finishError instanceof Error ? finishError.message : 'Failed to save conversation'
         }
-      },
-      stopWhen: stepCountIs(10),
-      messages,
-      tools: await getTools(),
-      onFinish: async () => {
-        await onComplete()
-      },
-    })
-    for await (const event of fullStream) {
-      yield event
+      }
+    } catch (error) {
+      console.error('Error in agent.ask():', error)
+      yield {
+        type: 'error' as const,
+        error: error instanceof Error ? error.message : 'Unknown error occurred'
+      }
     }
-    const newMessages = (await response).messages
-    await params.onFinish?.([
-      user as ModelMessage,
-      ...newMessages,
-    ])
   }
 
   const triggerSchedule = async (schedule: Schedule) => {

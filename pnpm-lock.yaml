@@ -126,6 +126,9 @@ importers:
       '@memoh/agent':
         specifier: workspace:*
         version: link:../agent
+      '@memoh/container':
+        specifier: workspace:*
+        version: link:../container
       '@memoh/db':
         specifier: workspace:*
         version: link:../db

@@ -1,10 +1,10 @@
 # @memoh/container
 
-基于 containerd 的容器化工具包，提供简单易用的容器管理 API。
+基于 nerdctl (containerd) 的容器化工具包，提供简单易用的容器管理 API。
 
 ## 特性
 
-- 🚀 基于 containerd 的高性能容器管理
+- 🚀 基于 nerdctl 的现代容器管理（Docker 兼容）
 - 📦 简洁的 API 设计
 - 🔧 完整的容器生命周期管理
 - 📝 TypeScript 支持
@@ -18,18 +18,30 @@ pnpm install @memoh/container
 
 ## 前置要求
 
-系统需要安装 containerd 和 ctr 命令行工具：
+### macOS (推荐使用 Lima)
 
 ```bash
-# macOS (使用 Homebrew)
-brew install containerd
+# 安装 Lima
+brew install lima
 
-# Ubuntu/Debian
-apt-get install containerd
+# 启动 Lima（已包含 nerdctl）
+limactl start
 
-# 启动 containerd 服务
-sudo systemctl start containerd
+# 验证
+lima nerdctl version
 ```
+
+### Linux
+
+```bash
+# 安装 nerdctl
+# 参考: https://github.com/containerd/nerdctl/releases
+
+# 或使用包管理器
+brew install nerdctl  # Homebrew on Linux
+```
+
+**详细 macOS 配置请参考 [NERDCTL_SETUP.md](./NERDCTL_SETUP.md)**
 
 ## 快速开始
 

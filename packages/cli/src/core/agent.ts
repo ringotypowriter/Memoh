@@ -83,6 +83,7 @@ async function performStreamChat(
   }
 
   let buffer = ''
+  let receivedDone = false
 
   while (true) {
     const { done, value } = await reader.read()
@@ -99,6 +100,7 @@ async function performStreamChat(
         const data = line.slice(6).trim()
 
         if (data === '[DONE]') {
+          receivedDone = true
           await onEvent({ type: 'done' })
           return
         }
@@ -118,6 +120,11 @@ async function performStreamChat(
         }
       }
     }
+  }
+
+  // If stream ended without [DONE], it's an error
+  if (!receivedDone) {
+    throw new Error('Connection closed unexpectedly - stream ended without completion signal')
   }
 }
 

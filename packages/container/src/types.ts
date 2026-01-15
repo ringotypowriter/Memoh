@@ -98,6 +98,8 @@ export interface ContainerStats {
  * Container operations interface
  */
 export interface ContainerOperations {
+  /** Build exec command */
+  buildExecCommand(command: string[]): string[];
   /** Start the container */
   start(): Promise<void>;
   /** Stop the container */
@@ -130,5 +132,7 @@ export interface ContainerdOptions {
   namespace?: string;
   /** Timeout for operations (ms) */
   timeout?: number;
+  /** ctr command */
+  ctrCommand?: string;
 }
 

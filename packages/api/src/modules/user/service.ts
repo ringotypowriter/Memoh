@@ -157,6 +157,16 @@ export const createUser = async (data: CreateUserInput) => {
       language: 'Same as user input',
     })
 
+  // 自动创建用户的容器
+  try {
+    const { createUserContainer } = await import('../container/service')
+    await createUserContainer(newUser.id)
+    console.log(`✅ Container created for user: ${newUser.username}`)
+  } catch (error) {
+    console.error(`❌ Failed to create container for user ${newUser.username}:`, error)
+    // 不阻塞用户创建，容器可以后续创建
+  }
+
   return newUser
 }
 

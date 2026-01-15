@@ -28,6 +28,10 @@ export interface AgentParams {
 
   mcpConnections?: MCPConnection[]
 
+  onBuildExecCommand?: (command: string[]) => string[]
+
+  onExecCommand?: (command: string[]) => Promise<{ stdout: string, stderr: string, exitCode: number }>
+
   onSendMessage?: (platform: string, options: SendMessageOptions) => Promise<void>
 
   onReadMemory?: (from: Date, to: Date) => Promise<MemoryUnit[]>

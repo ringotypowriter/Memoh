@@ -11,8 +11,9 @@ export {
   removeAllContainers,
 } from './container'
 
-// Export client
-export { ContainerdClient, buildExecCommand } from './containerd'
+// Export clients
+export { ContainerdClient } from './containerd'
+export { NerdctlClient } from './nerdctl'
 
 // Export types
 export type {

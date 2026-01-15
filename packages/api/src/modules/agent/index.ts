@@ -58,22 +58,31 @@ export const agentModule = new Elysia({
           try {
             const encoder = new TextEncoder()
             
+            console.log('📨 Starting agent stream for message:', body.message.substring(0, 50))
+            
             // Send events as they come
             for await (const event of agent.ask(body.message)) {
               const data = JSON.stringify(event)
               controller.enqueue(encoder.encode(`data: ${data}\n\n`))
             }
 
+            console.log('✅ Agent stream completed successfully')
+            
             // Send done event
             controller.enqueue(encoder.encode('data: [DONE]\n\n'))
             controller.close()
           } catch (error) {
+            console.error('❌ Error in agent stream:', error)
             const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            const errorStack = error instanceof Error ? error.stack : undefined
+            console.error('Error stack:', errorStack)
+            
             const errorData = JSON.stringify({ 
               type: 'error', 
               error: errorMessage 
             })
             controller.enqueue(new TextEncoder().encode(`data: ${errorData}\n\n`))
+            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'))
             controller.close()
           }
         },

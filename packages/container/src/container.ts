@@ -2,7 +2,7 @@
  * High-level container management API
  */
 
-import { ContainerdClient } from './containerd'
+import { NerdctlClient } from './nerdctl'
 import type {
   ContainerConfig,
   ContainerInfo,
@@ -34,7 +34,7 @@ export async function createContainer(
   config: ContainerConfig,
   options?: ContainerdOptions
 ): Promise<ContainerInfo> {
-  const client = new ContainerdClient(options)
+  const client = new NerdctlClient(options)
   
   // Ensure image is pulled
   await client.pullImage(config.image)
@@ -76,7 +76,7 @@ export function useContainer(
   containerIdOrName: string,
   options?: ContainerdOptions
 ): ContainerOperations {
-  const client = new ContainerdClient(options)
+  const client = new NerdctlClient(options)
   const containerName = containerIdOrName
   
   return {
@@ -176,6 +176,11 @@ export function useContainer(
         },
       }
     },
+
+    buildExecCommand(command: string[]): string[] {
+      // nerdctl exec with -i to keep STDIN open for MCP servers
+      return [...client.nerdctlCommand, 'exec', '-i', containerName, ...command]
+    }
   }
 }
 
@@ -194,7 +199,7 @@ export function useContainer(
  * ```
  */
 export async function listContainers(options?: ContainerdOptions): Promise<ContainerInfo[]> {
-  const client = new ContainerdClient(options)
+  const client = new NerdctlClient(options)
   return await client.listContainers()
 }
 
@@ -216,7 +221,7 @@ export async function containerExists(
   containerIdOrName: string,
   options?: ContainerdOptions
 ): Promise<boolean> {
-  const client = new ContainerdClient(options)
+  const client = new NerdctlClient(options)
   return await client.containerExists(containerIdOrName)
 }
 
@@ -236,7 +241,7 @@ export async function removeAllContainers(
   force: boolean = false,
   options?: ContainerdOptions
 ): Promise<void> {
-  const client = new ContainerdClient(options)
+  const client = new NerdctlClient(options)
   const containers = await client.listContainers()
   
   for (const container of containers) {
