@@ -132,7 +132,7 @@ export interface ContainerdOptions {
   namespace?: string;
   /** Timeout for operations (ms) */
   timeout?: number;
-  /** ctr command */
-  ctrCommand?: string;
+  /** nerdctl command */
+  nerdctlCommand?: string;
 }
 

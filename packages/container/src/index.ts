@@ -12,7 +12,6 @@ export {
 } from './container'
 
 // Export clients
-export { ContainerdClient } from './containerd'
 export { NerdctlClient } from './nerdctl'
 
 // Export types

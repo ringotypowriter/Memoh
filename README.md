@@ -36,6 +36,7 @@ Memoh是一个专属于你的AI私人管家，你可以把它跑在你的NAS，�
 - Bun 1.2+
 - PNPM
 - Qdrant
+- Redis
 
 ```bash
 cp .env.example .env
@@ -43,12 +44,17 @@ pnpm install
 ```
 
 <details><summary>Environment Variables</summary>
+
 - `DATABASE_URL`: PostgreSQL 连接字符串
 - `ROOT_USER`: 超级管理员用户名
 - `ROOT_USER_PASSWORD`: 超级管理员密码
 - `JWT_SECRET`: JWT 签名密钥
 - `QDRANT_URL`: Qdrant 连接字符串
 - `REDIS_URL`: Redis 连接字符串
+- `CONTAINER_DATA_DIR`: Container 数据目录
+- `CONTAINERD_SOCKET`: Containerd Socket 路径
+- `NERDCTL_COMMAND`: Nerdctl Command 路径
+
 </details>
 
 ### 数据库初始化
@@ -64,6 +70,39 @@ pnpm run api:dev
 ```
 
 API服务将在 `http://localhost:7002` 启动。
+
+### Containerd 设置
+
+Containerd 是容器管理的核心组件，Memoh 使用 Nerdctl 作为其容器管理工具。
+
+你需要确保 Containerd 已经安装并运行。
+
+然后设置一个目录用于存储容器数据，这个目录需要是绝对路径。
+
+```env
+CONTAINER_DATA_DIR=/Users/yourname/memoh/container
+```
+
+#### MacOS下使用Lima虚拟机运行
+
+Containerd不支持MacOS的本地运行，你需要使用Lima虚拟机运行。
+
+```bash
+brew install lima
+limactl start template://default
+```
+
+然后你需要设置环境变量，将 `nerdctl` 命令的路径设置为 `lima nerdctl`。
+
+```env
+NERDCTL_COMMAND=lima nerdctl
+```
+
+可能会出现sock文件找不到的报错，你需要正确找出socket文件的路径，并设置环境变量。
+
+```env
+CONTAINERD_SOCKET=/Users/yourname/.lima/default/sock/containerd/containerd.sock
+```
 
 ### 命令行工具
 
@@ -110,29 +149,6 @@ pnpm cli config set --chat-model <uuid> --summary-model <uuid> --embedding-model
 pnpm cli config set --max-context-time <minutes>
 ```
 - `--max-context-time`: 最大上下文加载时间，单位为分钟
-
-## Telegram Bot
-
-你需要获取你的Telegram Bot Token， 然后启动Telegram Service：
-
-```bash
-pnpm telegram:start
-```
-
-Telegram Service将在 `http://localhost:7101` 启动，这个是endpoint，你需要在Memoh中配置你的Telegram Bot Token：
-
-使用Memoh Cli:
-
-```bash
-pnpm cli platform create
-```
-
-根据提示配置platform
-- name: telegram
-- endpoint: http://localhost:7101
-- config: { "botToken": "<your-telegram-bot-token>" }
-
-然后你就可以通过Telegram Bot与Memoh进行交互了。
 
 ## Star History
 

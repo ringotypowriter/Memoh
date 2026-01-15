@@ -161,11 +161,11 @@ export function useContainer(
     /**
      * Get container stats
      * Note: This is a placeholder implementation
-     * Real implementation would require parsing ctr metrics
-     */
+     * Real implementation would require parsing nerdctl metrics
+     */ 
     async stats(): Promise<ContainerStats> {
       // This is a simplified implementation
-      // Full implementation would require parsing ctr metrics output
+      // Full implementation would require parsing nerdctl metrics output
       return {
         cpuUsage: 0,
         memoryUsage: 0,

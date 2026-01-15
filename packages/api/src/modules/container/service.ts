@@ -90,7 +90,7 @@ export const createUserContainer = async (
   // 在 containerd 中创建容器
   const containerInfo = await createContainer(config, { 
     namespace,
-    ctrCommand: process.env.CTR_COMMAND || 'ctr',
+    nerdctlCommand: process.env.NERDCTL_COMMAND || 'nerdctl',
   })
 
   // 在数据库中记录

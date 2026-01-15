@@ -20,7 +20,7 @@ export class NerdctlClient {
     this.socket = options.socket || process.env.CONTAINERD_SOCKET
     this.timeout = options.timeout || 30000
     // Support commands like "lima nerdctl"
-    const rawCommand = options.ctrCommand || process.env.CTR_COMMAND || 'nerdctl'
+    const rawCommand = options.nerdctlCommand || process.env.NERDCTL_COMMAND || 'nerdctl'
     this.nerdctlCommand = rawCommand.split(' ').filter(part => part.length > 0)
   }
 
