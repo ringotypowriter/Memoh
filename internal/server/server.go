@@ -15,7 +15,7 @@ type Server struct {
 	addr string
 }
 
-func NewServer(addr string, jwtSecret string, pingHandler *handlers.PingHandler, authHandler *handlers.AuthHandler, memoryHandler *handlers.MemoryHandler, embeddingsHandler *handlers.EmbeddingsHandler, fsHandler *handlers.FSHandler, swaggerHandler *handlers.SwaggerHandler) *Server {
+func NewServer(addr string, jwtSecret string, pingHandler *handlers.PingHandler, authHandler *handlers.AuthHandler, memoryHandler *handlers.MemoryHandler, embeddingsHandler *handlers.EmbeddingsHandler, fsHandler *handlers.FSHandler, swaggerHandler *handlers.SwaggerHandler, chatHandler *handlers.ChatHandler, providersHandler *handlers.ProvidersHandler, modelsHandler *handlers.ModelsHandler) *Server {
 	if addr == "" {
 		addr = ":8080"
 	}
@@ -52,6 +52,15 @@ func NewServer(addr string, jwtSecret string, pingHandler *handlers.PingHandler,
 	}
 	if swaggerHandler != nil {
 		swaggerHandler.Register(e)
+	}
+	if chatHandler != nil {
+		chatHandler.Register(e)
+	}
+	if providersHandler != nil {
+		providersHandler.Register(e)
+	}
+	if modelsHandler != nil {
+		modelsHandler.Register(e)
 	}
 
 	return &Server{

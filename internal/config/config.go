@@ -20,8 +20,6 @@ const (
 	DefaultPGUser           = "postgres"
 	DefaultPGDatabase       = "memoh"
 	DefaultPGSSLMode        = "disable"
-	DefaultMemoryBaseURL    = "https://api.openai.com"
-	DefaultMemoryTimeout    = 10
 	DefaultQdrantURL        = "http://127.0.0.1:6334"
 	DefaultQdrantCollection = "memory"
 )
@@ -32,7 +30,6 @@ type Config struct {
 	Containerd ContainerdConfig `toml:"containerd"`
 	MCP        MCPConfig        `toml:"mcp"`
 	Postgres   PostgresConfig   `toml:"postgres"`
-	Memory     MemoryConfig     `toml:"memory"`
 	Qdrant     QdrantConfig     `toml:"qdrant"`
 }
 
@@ -66,13 +63,6 @@ type PostgresConfig struct {
 	SSLMode  string `toml:"sslmode"`
 }
 
-type MemoryConfig struct {
-	BaseURL        string `toml:"base_url"`
-	APIKey         string `toml:"api_key"`
-	Model          string `toml:"model"`
-	TimeoutSeconds int    `toml:"timeout_seconds"`
-}
-
 type QdrantConfig struct {
 	BaseURL        string `toml:"base_url"`
 	APIKey         string `toml:"api_key"`
@@ -103,11 +93,6 @@ func Load(path string) (Config, error) {
 			User:     DefaultPGUser,
 			Database: DefaultPGDatabase,
 			SSLMode:  DefaultPGSSLMode,
-		},
-		Memory: MemoryConfig{
-			BaseURL:        DefaultMemoryBaseURL,
-			Model:          "gpt-4.1-nano",
-			TimeoutSeconds: DefaultMemoryTimeout,
 		},
 		Qdrant: QdrantConfig{
 			BaseURL:    DefaultQdrantURL,

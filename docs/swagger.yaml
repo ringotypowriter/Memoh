@@ -1,4 +1,63 @@
 definitions:
+  chat.ChatRequest:
+    properties:
+      messages:
+        items:
+          $ref: '#/definitions/chat.Message'
+        type: array
+      model:
+        description: 'optional: specific model to use'
+        type: string
+      provider:
+        description: 'optional: specific provider to use'
+        type: string
+      stream:
+        type: boolean
+    type: object
+  chat.ChatResponse:
+    properties:
+      finish_reason:
+        type: string
+      message:
+        $ref: '#/definitions/chat.Message'
+      model:
+        type: string
+      provider:
+        type: string
+      usage:
+        $ref: '#/definitions/chat.Usage'
+    type: object
+  chat.Message:
+    properties:
+      content:
+        type: string
+      role:
+        description: user, assistant, system
+        type: string
+    type: object
+  chat.StreamChunk:
+    properties:
+      delta:
+        properties:
+          content:
+            type: string
+        type: object
+      finish_reason:
+        type: string
+      model:
+        type: string
+      provider:
+        type: string
+    type: object
+  chat.Usage:
+    properties:
+      completion_tokens:
+        type: integer
+      prompt_tokens:
+        type: integer
+      total_tokens:
+        type: integer
+    type: object
   handlers.ApplyPatchRequest:
     properties:
       patch:
@@ -382,6 +441,78 @@ definitions:
       type:
         $ref: '#/definitions/models.ModelType'
     type: object
+  providers.ClientType:
+    enum:
+    - openai
+    - openai-compat
+    - anthropic
+    - google
+    - ollama
+    type: string
+    x-enum-varnames:
+    - ClientTypeOpenAI
+    - ClientTypeOpenAICompat
+    - ClientTypeAnthropic
+    - ClientTypeGoogle
+    - ClientTypeOllama
+  providers.CountResponse:
+    properties:
+      count:
+        type: integer
+    type: object
+  providers.CreateRequest:
+    properties:
+      api_key:
+        type: string
+      base_url:
+        type: string
+      client_type:
+        $ref: '#/definitions/providers.ClientType'
+      metadata:
+        additionalProperties: true
+        type: object
+      name:
+        type: string
+    required:
+    - base_url
+    - client_type
+    - name
+    type: object
+  providers.GetResponse:
+    properties:
+      api_key:
+        description: masked in response
+        type: string
+      base_url:
+        type: string
+      client_type:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  providers.UpdateRequest:
+    properties:
+      api_key:
+        type: string
+      base_url:
+        type: string
+      client_type:
+        $ref: '#/definitions/providers.ClientType'
+      metadata:
+        additionalProperties: true
+        type: object
+      name:
+        type: string
+    type: object
 info:
   contact: {}
 paths:
@@ -415,6 +546,68 @@ paths:
       summary: Login
       tags:
       - auth
+  /chat:
+    post:
+      consumes:
+      - application/json
+      description: Send a chat message and get a response. The system will automatically
+        select an appropriate chat model from the database.
+      parameters:
+      - description: Chat request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/chat.ChatRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/chat.ChatResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Chat with AI
+      tags:
+      - chat
+  /chat/stream:
+    post:
+      consumes:
+      - application/json
+      description: Send a chat message and get a streaming response. The system will
+        automatically select an appropriate chat model from the database.
+      parameters:
+      - description: Chat request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/chat.ChatRequest'
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/chat.StreamChunk'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Stream chat with AI
+      tags:
+      - chat
   /embeddings:
     post:
       description: Create text or multimodal embeddings
@@ -1002,9 +1195,15 @@ paths:
       - models
   /models/enable-as/{enableAs}:
     get:
-      description: Get the model that is enabled for a specific purpose (chat, memory,
-        embedding)
+      description: |-
+        Get the model that is enabled for a specific purpose (chat, memory, embedding)
+        Get the default model configured for a specific purpose (chat, memory, or embedding)
       parameters:
+      - description: Enable as value (chat, memory, embedding)
+        in: path
+        name: enableAs
+        required: true
+        type: string
       - description: Enable as value (chat, memory, embedding)
         in: path
         name: enableAs
@@ -1027,8 +1226,9 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
-      summary: Get model by enable_as
+      summary: Get default model by enable_as
       tags:
+      - models
       - models
   /models/model/{modelId}:
     delete:
@@ -1119,4 +1319,227 @@ paths:
       summary: Update model by model ID
       tags:
       - models
+  /providers:
+    get:
+      consumes:
+      - application/json
+      description: Get a list of all configured LLM providers, optionally filtered
+        by client type
+      parameters:
+      - description: Client type filter (openai, anthropic, google, ollama)
+        in: query
+        name: client_type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/providers.GetResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: List all LLM providers
+      tags:
+      - providers
+    post:
+      consumes:
+      - application/json
+      description: Create a new LLM provider configuration
+      parameters:
+      - description: Provider configuration
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/providers.CreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/providers.GetResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Create a new LLM provider
+      tags:
+      - providers
+  /providers/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Delete a provider configuration
+      parameters:
+      - description: Provider ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Delete provider
+      tags:
+      - providers
+    get:
+      consumes:
+      - application/json
+      description: Get a provider configuration by its ID
+      parameters:
+      - description: Provider ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/providers.GetResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Get provider by ID
+      tags:
+      - providers
+    put:
+      consumes:
+      - application/json
+      description: Update an existing provider configuration
+      parameters:
+      - description: Provider ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Updated provider configuration
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/providers.UpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/providers.GetResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Update provider
+      tags:
+      - providers
+  /providers/count:
+    get:
+      consumes:
+      - application/json
+      description: Get the total count of providers, optionally filtered by client
+        type
+      parameters:
+      - description: Client type filter (openai, anthropic, google, ollama)
+        in: query
+        name: client_type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/providers.CountResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Count providers
+      tags:
+      - providers
+  /providers/name/{name}:
+    get:
+      consumes:
+      - application/json
+      description: Get a provider configuration by its name
+      parameters:
+      - description: Provider name
+        in: path
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/providers.GetResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      summary: Get provider by name
+      tags:
+      - providers
 swagger: "2.0"

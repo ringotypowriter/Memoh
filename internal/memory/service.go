@@ -16,20 +16,20 @@ import (
 )
 
 type Service struct {
-	llm         *LLMClient
-	embedder    embeddings.Embedder
-	store       *QdrantStore
-	resolver    *embeddings.Resolver
+	llm                      LLM
+	embedder                 embeddings.Embedder
+	store                    *QdrantStore
+	resolver                 *embeddings.Resolver
 	defaultTextModelID       string
 	defaultMultimodalModelID string
 }
 
-func NewService(llm *LLMClient, embedder embeddings.Embedder, store *QdrantStore, resolver *embeddings.Resolver, defaultTextModelID, defaultMultimodalModelID string) *Service {
+func NewService(llm LLM, embedder embeddings.Embedder, store *QdrantStore, resolver *embeddings.Resolver, defaultTextModelID, defaultMultimodalModelID string) *Service {
 	return &Service{
-		llm:         llm,
-		embedder:    embedder,
-		store:       store,
-		resolver:    resolver,
+		llm:                      llm,
+		embedder:                 embedder,
+		store:                    store,
+		resolver:                 resolver,
 		defaultTextModelID:       defaultTextModelID,
 		defaultMultimodalModelID: defaultMultimodalModelID,
 	}
@@ -138,10 +138,10 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 	}
 
 	var (
-		vector []float32
-		store  *QdrantStore
+		vector     []float32
+		store      *QdrantStore
 		vectorName string
-		err    error
+		err        error
 	)
 	if modality == embeddings.TypeMultimodal {
 		if s.resolver == nil {
@@ -237,10 +237,10 @@ func (s *Service) EmbedUpsert(ctx context.Context, req EmbedUpsertRequest) (Embe
 		metadata["model_id"] = result.Model
 	}
 	if err := s.store.Upsert(ctx, []qdrantPoint{{
-		ID:      id,
-		Vector:  result.Embedding,
+		ID:         id,
+		Vector:     result.Embedding,
 		VectorName: vectorName,
-		Payload: payload,
+		Payload:    payload,
 	}}); err != nil {
 		return EmbedUpsertResponse{}, err
 	}
@@ -280,10 +280,10 @@ func (s *Service) Update(ctx context.Context, req UpdateRequest) (MemoryItem, er
 		return MemoryItem{}, err
 	}
 	if err := s.store.Upsert(ctx, []qdrantPoint{{
-		ID:      req.MemoryID,
-		Vector:  vector,
+		ID:         req.MemoryID,
+		Vector:     vector,
 		VectorName: s.vectorNameForText(),
-		Payload: payload,
+		Payload:    payload,
 	}}); err != nil {
 		return MemoryItem{}, err
 	}
@@ -411,10 +411,10 @@ func (s *Service) applyAdd(ctx context.Context, text string, filters map[string]
 	id := uuid.NewString()
 	payload := buildPayload(text, filters, metadata, "")
 	if err := s.store.Upsert(ctx, []qdrantPoint{{
-		ID:      id,
-		Vector:  vector,
+		ID:         id,
+		Vector:     vector,
 		VectorName: s.vectorNameForText(),
-		Payload: payload,
+		Payload:    payload,
 	}}); err != nil {
 		return MemoryItem{}, err
 	}
@@ -448,10 +448,10 @@ func (s *Service) applyUpdate(ctx context.Context, id, text string, filters map[
 		return MemoryItem{}, err
 	}
 	if err := s.store.Upsert(ctx, []qdrantPoint{{
-		ID:      id,
-		Vector:  vector,
+		ID:         id,
+		Vector:     vector,
 		VectorName: s.vectorNameForText(),
-		Payload: payload,
+		Payload:    payload,
 	}}); err != nil {
 		return MemoryItem{}, err
 	}
@@ -756,4 +756,3 @@ func normalizeScore(score, minScore, maxScore float64) float64 {
 	}
 	return (score - minScore) / (maxScore - minScore)
 }
-

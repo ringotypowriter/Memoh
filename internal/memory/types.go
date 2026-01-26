@@ -1,5 +1,13 @@
 package memory
 
+import "context"
+
+// LLM is the interface for LLM operations needed by memory service
+type LLM interface {
+	Extract(ctx context.Context, req ExtractRequest) (ExtractResponse, error)
+	Decide(ctx context.Context, req DecideRequest) (DecideResponse, error)
+}
+
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
