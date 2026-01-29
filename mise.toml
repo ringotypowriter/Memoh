@@ -32,6 +32,14 @@ run = "cd internal/handlers && go generate"
 description = "Generate SQL code"
 run = "sqlc generate"
 
+[tasks.db-up]
+description = "Intialize and Migrate Database"
+run = "scripts/db-up.sh"
+
+[tasks.db-down]
+description = "Drop Database"
+run = "scripts/db-down.sh"
+
 [tasks.dev]
 description = "Start development environment"
 depends = [
@@ -45,6 +53,7 @@ depends = [
 [tasks.setup]
 description = "Setup development environment"
 depends = [
+  "//:db-up",
   "//:pnpm-install",
   "//:go-install",
 ]
