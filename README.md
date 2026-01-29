@@ -24,6 +24,15 @@ Memoh是一个专属于你的AI私人管家，你可以把它跑在你的NAS，�
 - [ ] 文件系统管理：Memoh可以帮你管理你的文件系统，比如：文件搜索，图片分类，文件分享等。他可以创建文件，也可以通过聊天软件发送文件给你；你也可以通过发送文件给他帮你处理。
 - More...
 
+## Development
+
+你需要先安装mise，然后执行以下命令：
+
+```bash
+mise install
+mise run dev
+```
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=memohai/Memoh&type=date&legend=top-left)](https://www.star-history.com/#memohai/Memoh&type=date&legend=top-left)

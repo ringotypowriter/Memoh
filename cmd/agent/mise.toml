@@ -1,0 +1,5 @@
+[tasks.start]
+alias = "dev"
+description = "Start server"
+run = "go run main.go"
+depends = ["//:go-install"]

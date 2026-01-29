@@ -1,0 +1,41 @@
+experimental_monorepo_root = true
+
+[tools]
+# Go version from go.mod
+go = "1.25.2"
+# Node.js for frontend packages
+node = "22"
+# Bun for agent gateway
+bun = "latest"
+# pnpm for workspace management
+pnpm = "9"
+
+[task_config]
+dir = "{{cwd}}"
+
+[settings]
+experimental = true
+
+[tasks.pnpm-install]
+description = "Install dependencies"
+run = "pnpm install"
+
+[tasks.go-install]
+description = "Install Go dependencies"
+run = "go mod download"
+
+[tasks.dev]
+description = "Start development environment"
+depends = [
+  "//agent:dev",
+  "//cmd/agent:start",
+]
+
+[tasks.setup]
+description = "Setup development environment"
+depends = [
+  "//:pnpm-install",
+  "//:go-install",
+]
+run = "echo '✓ Setup complete! Next: Copy config.toml.example to config.toml and configure, then run: mise run dev:web'"
+
