@@ -41,6 +41,29 @@ type ModelResponse = Partial<Model> & {
   model?: Model
 }
 
+type Schedule = {
+  id: string
+  name: string
+  description: string
+  pattern: string
+  max_calls?: number | null
+  current_calls?: number
+  created_at?: string
+  updated_at?: string
+  enabled: boolean
+  command: string
+  user_id?: string
+}
+
+type ScheduleListResponse = {
+  items: Schedule[]
+}
+
+type Settings = {
+  max_context_load_time: number
+  language: string
+}
+
 const program = new Command()
 program
   .name('memoh')
@@ -114,6 +137,22 @@ const renderModelsTable = (models: ModelResponse[], providers: Provider[]) => {
   return table(rows)
 }
 
+const renderSchedulesTable = (items: Schedule[]) => {
+  const rows: string[][] = [['ID', 'Name', 'Pattern', 'Enabled', 'Max Calls', 'Current Calls', 'Command']]
+  for (const item of items) {
+    rows.push([
+      item.id,
+      item.name,
+      item.pattern,
+      item.enabled ? 'yes' : 'no',
+      item.max_calls === null || item.max_calls === undefined ? '-' : String(item.max_calls),
+      item.current_calls === undefined ? '-' : String(item.current_calls),
+      item.command,
+    ])
+  }
+  return table(rows)
+}
+
 program
   .command('login')
   .description('Login')
@@ -181,10 +220,19 @@ const configCmd = program
   .command('config')
   .description('Show or update current config')
 
-configCmd.action(() => {
+configCmd.action(async () => {
   const config = readConfig()
   console.log(`host = "${config.host}"`)
   console.log(`port = ${config.port}`)
+  const token = readToken()
+  if (!token?.access_token) return
+  try {
+    const settings = await apiRequest<Settings>('/settings', {}, token)
+    console.log(`max_context_load_time = ${settings.max_context_load_time}`)
+    console.log(`language = "${settings.language}"`)
+  } catch (err: unknown) {
+    console.log(chalk.yellow(`Unable to load settings: ${getErrorMessage(err)}`))
+  }
 })
 
 configCmd
@@ -192,12 +240,26 @@ configCmd
   .description('Update config')
   .option('--host <host>')
   .option('--port <port>')
+  .option('--max_context_load_time <minutes>')
+  .option('--language <language>')
   .action(async (opts) => {
     const current = readConfig()
     let host = opts.host
     let port = opts.port ? Number.parseInt(opts.port, 10) : undefined
+    let maxContextLoadTime: number | undefined
+    if (opts.max_context_load_time !== undefined) {
+      const parsed = Number.parseInt(opts.max_context_load_time, 10)
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        console.log(chalk.red('max_context_load_time must be a positive integer.'))
+        process.exit(1)
+      }
+      maxContextLoadTime = parsed
+    }
+    let language = opts.language
+    const hasSettingsInput = opts.max_context_load_time !== undefined || opts.language !== undefined
+    const hasConfigInput = Boolean(host || port)
 
-    if (!host && !port) {
+    if (!hasConfigInput && !hasSettingsInput) {
       const answers = await inquirer.prompt([
         { type: 'input', name: 'host', message: 'Host:', default: current.host },
         { type: 'input', name: 'port', message: 'Port:', default: current.port },
@@ -209,8 +271,28 @@ configCmd
     if (host) current.host = host
     if (port && !Number.isNaN(port)) current.port = port
 
-    writeConfig(current)
-    console.log(chalk.green('Config updated'))
+    if (host || (port && !Number.isNaN(port))) {
+      writeConfig(current)
+      console.log(chalk.green('Config updated'))
+    }
+
+    if (hasSettingsInput) {
+      if (language) {
+        language = String(language).trim()
+      }
+      const payload: Partial<Settings> = {}
+      if (maxContextLoadTime !== undefined) payload.max_context_load_time = maxContextLoadTime
+      if (language) payload.language = language
+      const token = ensureAuth()
+      const spinner = ora('Updating settings...').start()
+      try {
+        await apiRequest('/settings', { method: 'PUT', body: JSON.stringify(payload) }, token)
+        spinner.succeed('Settings updated')
+      } catch (err: unknown) {
+        spinner.fail(getErrorMessage(err) || 'Failed to update settings')
+        process.exit(1)
+      }
+    }
   })
 
 const provider = program.command('provider').description('Provider management')
@@ -459,6 +541,174 @@ model
       spinner.succeed('Model enabled')
     } catch (err: unknown) {
       spinner.fail(getErrorMessage(err) || 'Failed to enable model')
+      process.exit(1)
+    }
+  })
+
+const schedule = program.command('schedule').description('Schedule management')
+
+schedule
+  .command('list')
+  .description('List schedules')
+  .action(async () => {
+    const token = ensureAuth()
+    const resp = await apiRequest<ScheduleListResponse>('/schedule', {}, token)
+    if (!resp.items.length) {
+      console.log(chalk.yellow('No schedules found.'))
+      return
+    }
+    console.log(renderSchedulesTable(resp.items))
+  })
+
+schedule
+  .command('get')
+  .description('Get schedule')
+  .argument('<id>')
+  .action(async (id) => {
+    const token = ensureAuth()
+    const resp = await apiRequest<Schedule>(`/schedule/${encodeURIComponent(id)}`, {}, token)
+    console.log(JSON.stringify(resp, null, 2))
+  })
+
+schedule
+  .command('create')
+  .description('Create schedule')
+  .option('--name <name>')
+  .option('--description <description>')
+  .option('--pattern <pattern>')
+  .option('--command <command>')
+  .option('--max_calls <max_calls>')
+  .option('--enabled')
+  .option('--disabled')
+  .action(async (opts) => {
+    if (opts.enabled && opts.disabled) {
+      console.log(chalk.red('Use only one of --enabled or --disabled.'))
+      process.exit(1)
+    }
+    const questions = []
+    if (!opts.name) questions.push({ type: 'input', name: 'name', message: 'Name:' })
+    if (!opts.description) questions.push({ type: 'input', name: 'description', message: 'Description:' })
+    if (!opts.pattern) questions.push({ type: 'input', name: 'pattern', message: 'Cron pattern:' })
+    if (!opts.command) questions.push({ type: 'input', name: 'command', message: 'Command:' })
+    if (opts.max_calls === undefined) {
+      questions.push({
+        type: 'input',
+        name: 'max_calls',
+        message: 'Max calls (optional, empty for unlimited):',
+        default: '',
+      })
+    }
+    const answers = questions.length ? await inquirer.prompt(questions) : {}
+    const maxCallsInput = opts.max_calls ?? answers.max_calls
+    let maxCalls: number | undefined
+    if (maxCallsInput !== undefined && String(maxCallsInput).trim() !== '') {
+      const parsed = Number.parseInt(String(maxCallsInput), 10)
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        console.log(chalk.red('max_calls must be a positive integer.'))
+        process.exit(1)
+      }
+      maxCalls = parsed
+    }
+    const payload = {
+      name: opts.name ?? answers.name,
+      description: opts.description ?? answers.description,
+      pattern: opts.pattern ?? answers.pattern,
+      command: opts.command ?? answers.command,
+      max_calls: maxCalls,
+      enabled: opts.enabled ? true : (opts.disabled ? false : undefined),
+    }
+    const token = ensureAuth()
+    const spinner = ora('Creating schedule...').start()
+    try {
+      await apiRequest('/schedule', { method: 'POST', body: JSON.stringify(payload) }, token)
+      spinner.succeed('Schedule created')
+    } catch (err: unknown) {
+      spinner.fail(getErrorMessage(err) || 'Failed to create schedule')
+      process.exit(1)
+    }
+  })
+
+schedule
+  .command('update')
+  .description('Update schedule')
+  .argument('<id>')
+  .option('--name <name>')
+  .option('--description <description>')
+  .option('--pattern <pattern>')
+  .option('--command <command>')
+  .option('--max_calls <max_calls>')
+  .option('--enabled')
+  .option('--disabled')
+  .action(async (id, opts) => {
+    if (opts.enabled && opts.disabled) {
+      console.log(chalk.red('Use only one of --enabled or --disabled.'))
+      process.exit(1)
+    }
+    const payload: Record<string, unknown> = {}
+    if (opts.name) payload.name = opts.name
+    if (opts.description) payload.description = opts.description
+    if (opts.pattern) payload.pattern = opts.pattern
+    if (opts.command) payload.command = opts.command
+    if (opts.max_calls !== undefined) {
+      const parsed = Number.parseInt(String(opts.max_calls), 10)
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        console.log(chalk.red('max_calls must be a positive integer.'))
+        process.exit(1)
+      }
+      payload.max_calls = parsed
+    }
+    if (opts.enabled) payload.enabled = true
+    if (opts.disabled) payload.enabled = false
+    if (Object.keys(payload).length === 0) {
+      console.log(chalk.red('No updates provided.'))
+      process.exit(1)
+    }
+    const token = ensureAuth()
+    const spinner = ora('Updating schedule...').start()
+    try {
+      await apiRequest(`/schedule/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }, token)
+      spinner.succeed('Schedule updated')
+    } catch (err: unknown) {
+      spinner.fail(getErrorMessage(err) || 'Failed to update schedule')
+      process.exit(1)
+    }
+  })
+
+schedule
+  .command('toggle')
+  .description('Enable/disable schedule')
+  .argument('<id>')
+  .action(async (id) => {
+    const token = ensureAuth()
+    const current = await apiRequest<Schedule>(`/schedule/${encodeURIComponent(id)}`, {}, token)
+    const spinner = ora('Updating schedule...').start()
+    try {
+      await apiRequest(`/schedule/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled: !current.enabled }),
+      }, token)
+      spinner.succeed(`Schedule ${current.enabled ? 'disabled' : 'enabled'}`)
+    } catch (err: unknown) {
+      spinner.fail(getErrorMessage(err) || 'Failed to update schedule')
+      process.exit(1)
+    }
+  })
+
+schedule
+  .command('delete')
+  .description('Delete schedule')
+  .argument('<id>')
+  .action(async (id) => {
+    const token = ensureAuth()
+    const spinner = ora('Deleting schedule...').start()
+    try {
+      await apiRequest(`/schedule/${encodeURIComponent(id)}`, { method: 'DELETE' }, token)
+      spinner.succeed('Schedule deleted')
+    } catch (err: unknown) {
+      spinner.fail(getErrorMessage(err) || 'Failed to delete schedule')
       process.exit(1)
     }
   })
