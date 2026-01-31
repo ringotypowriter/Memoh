@@ -105,6 +105,20 @@ type Snapshot struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type Subagent struct {
+	ID          pgtype.UUID        `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Deleted     bool               `json:"deleted"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+	UserID      pgtype.UUID        `json:"user_id"`
+	Messages    []byte             `json:"messages"`
+	Metadata    []byte             `json:"metadata"`
+	Skills      []byte             `json:"skills"`
+}
+
 type User struct {
 	ID           pgtype.UUID        `json:"id"`
 	Username     string             `json:"username"`

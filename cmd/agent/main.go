@@ -23,6 +23,7 @@ import (
 	"github.com/memohai/memoh/internal/schedule"
 	"github.com/memohai/memoh/internal/settings"
 	"github.com/memohai/memoh/internal/server"
+	"github.com/memohai/memoh/internal/subagent"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
@@ -168,7 +169,9 @@ func main() {
 		log.Fatalf("schedule bootstrap: %v", err)
 	}
 	scheduleHandler := handlers.NewScheduleHandler(scheduleService)
-	srv := server.NewServer(addr, cfg.Auth.JWTSecret, pingHandler, authHandler, memoryHandler, embeddingsHandler, chatHandler, swaggerHandler, providersHandler, modelsHandler, settingsHandler, historyHandler, scheduleHandler, containerdHandler)
+	subagentService := subagent.NewService(queries)
+	subagentHandler := handlers.NewSubagentHandler(subagentService)
+	srv := server.NewServer(addr, cfg.Auth.JWTSecret, pingHandler, authHandler, memoryHandler, embeddingsHandler, chatHandler, swaggerHandler, providersHandler, modelsHandler, settingsHandler, historyHandler, scheduleHandler, subagentHandler, containerdHandler)
 
 	if err := srv.Start(); err != nil {
 		log.Fatalf("server failed: %v", err)

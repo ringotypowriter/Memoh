@@ -163,3 +163,21 @@ CREATE TABLE IF NOT EXISTS schedule (
 
 CREATE INDEX IF NOT EXISTS idx_schedule_user_id ON schedule(user_id);
 CREATE INDEX IF NOT EXISTS idx_schedule_enabled ON schedule(enabled);
+
+CREATE TABLE IF NOT EXISTS subagents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted BOOLEAN NOT NULL DEFAULT false,
+  deleted_at TIMESTAMPTZ,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+  CONSTRAINT subagents_name_unique UNIQUE (name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_subagents_user_id ON subagents(user_id);
+CREATE INDEX IF NOT EXISTS idx_subagents_deleted ON subagents(deleted);
