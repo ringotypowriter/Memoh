@@ -173,6 +173,10 @@ func (h *ContainerdHandler) CreateContainer(c echo.Context) error {
 	if err := os.MkdirAll(filepath.Join(dataDir, ".skills"), 0o755); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
+	resolvPath, err := ctr.ResolveConfSource(dataDir)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
 
 	specOpts := []oci.SpecOpts{
 		oci.WithMounts([]specs.Mount{
@@ -187,6 +191,12 @@ func (h *ContainerdHandler) CreateContainer(c echo.Context) error {
 				Type:        "bind",
 				Source:      dataDir,
 				Options:     []string{"rbind", "rw"},
+			},
+			{
+				Destination: "/etc/resolv.conf",
+				Type:        "bind",
+				Source:      resolvPath,
+				Options:     []string{"rbind", "ro"},
 			},
 		}),
 		oci.WithProcessArgs("/bin/sh", "-lc", "bootstrap(){ [ -e /app/mcp ] || { mkdir -p /app; [ -f /opt/mcp ] && cp -a /opt/mcp /app/mcp 2>/dev/null || true; }; }; bootstrap; exec /app/mcp"),
@@ -227,14 +237,22 @@ func (h *ContainerdHandler) CreateContainer(c echo.Context) error {
 	}
 
 	started := false
-	if _, err := h.service.StartTask(ctx, containerID, &ctr.StartTaskOptions{
+	if task, err := h.service.StartTask(ctx, containerID, &ctr.StartTaskOptions{
 		UseStdio: false,
 	}); err == nil {
-		started = true
-		if h.queries != nil {
-			if pgBotID, parseErr := parsePgUUID(botID); parseErr == nil {
-				_ = h.queries.UpdateContainerStarted(c.Request().Context(), pgBotID)
+		if netErr := ctr.SetupNetwork(ctx, task, containerID); netErr == nil {
+			started = true
+			if h.queries != nil {
+				if pgBotID, parseErr := parsePgUUID(botID); parseErr == nil {
+					_ = h.queries.UpdateContainerStarted(c.Request().Context(), pgBotID)
+				}
 			}
+		} else {
+			_ = h.service.StopTask(ctx, containerID, &ctr.StopTaskOptions{Force: true})
+			h.logger.Error("mcp container network setup failed",
+				slog.String("container_id", containerID),
+				slog.Any("error", netErr),
+			)
 		}
 	} else {
 		h.logger.Error("mcp container start failed",
@@ -265,9 +283,16 @@ func (h *ContainerdHandler) ensureTaskRunning(ctx context.Context, containerID s
 		_ = h.service.DeleteTask(ctx, containerID, &ctr.DeleteTaskOptions{Force: true})
 	}
 
-	_, err = h.service.StartTask(ctx, containerID, &ctr.StartTaskOptions{
+	task, err := h.service.StartTask(ctx, containerID, &ctr.StartTaskOptions{
 		UseStdio: false,
 	})
+	if err != nil {
+		return err
+	}
+	if err := ctr.SetupNetwork(ctx, task, containerID); err != nil {
+		_ = h.service.StopTask(ctx, containerID, &ctr.StopTaskOptions{Force: true})
+		return err
+	}
 	return err
 }
 
@@ -646,6 +671,10 @@ func (h *ContainerdHandler) SetupBotContainer(ctx context.Context, botID string)
 	if err := os.MkdirAll(filepath.Join(dataDir, ".skills"), 0o755); err != nil {
 		return err
 	}
+	resolvPath, err := ctr.ResolveConfSource(dataDir)
+	if err != nil {
+		return err
+	}
 
 	specOpts := []oci.SpecOpts{
 		oci.WithMounts([]specs.Mount{
@@ -661,11 +690,17 @@ func (h *ContainerdHandler) SetupBotContainer(ctx context.Context, botID string)
 				Source:      dataDir,
 				Options:     []string{"rbind", "rw"},
 			},
+			{
+				Destination: "/etc/resolv.conf",
+				Type:        "bind",
+				Source:      resolvPath,
+				Options:     []string{"rbind", "ro"},
+			},
 		}),
 		oci.WithProcessArgs("/bin/sh", "-lc", "bootstrap(){ [ -e /app/mcp ] || { mkdir -p /app; [ -f /opt/mcp ] && cp -a /opt/mcp /app/mcp 2>/dev/null || true; }; }; bootstrap; exec /app/mcp"),
 	}
 
-	_, err := h.service.CreateContainer(ctx, ctr.CreateContainerRequest{
+	_, err = h.service.CreateContainer(ctx, ctr.CreateContainerRequest{
 		ID:          containerID,
 		ImageRef:    image,
 		Snapshotter: snapshotter,
@@ -699,13 +734,22 @@ func (h *ContainerdHandler) SetupBotContainer(ctx context.Context, botID string)
 		}
 	}
 
-	if _, err := h.service.StartTask(ctx, containerID, &ctr.StartTaskOptions{
+	if task, err := h.service.StartTask(ctx, containerID, &ctr.StartTaskOptions{
 		UseStdio: false,
 	}); err == nil {
-		if h.queries != nil {
-			if pgBotID, parseErr := parsePgUUID(botID); parseErr == nil {
-				_ = h.queries.UpdateContainerStarted(ctx, pgBotID)
+		if netErr := ctr.SetupNetwork(ctx, task, containerID); netErr == nil {
+			if h.queries != nil {
+				if pgBotID, parseErr := parsePgUUID(botID); parseErr == nil {
+					_ = h.queries.UpdateContainerStarted(ctx, pgBotID)
+				}
 			}
+		} else {
+			_ = h.service.StopTask(ctx, containerID, &ctr.StopTaskOptions{Force: true})
+			h.logger.Error("setup bot container: network setup failed",
+				slog.String("bot_id", botID),
+				slog.String("container_id", containerID),
+				slog.Any("error", netErr),
+			)
 		}
 	} else {
 		h.logger.Error("setup bot container: task start failed",
@@ -729,6 +773,9 @@ func (h *ContainerdHandler) CleanupBotContainer(ctx context.Context, botID strin
 		return nil
 	}
 
+	if task, taskErr := h.service.GetTask(ctx, containerID); taskErr == nil {
+		_ = ctr.RemoveNetwork(ctx, task, containerID)
+	}
 	_ = h.service.StopTask(ctx, containerID, &ctr.StopTaskOptions{
 		Timeout: 5 * time.Second,
 		Force:   true,

@@ -90,6 +90,10 @@ func (m *Manager) EnsureBot(ctx context.Context, botID string) error {
 
 	dataMount := m.dataMount()
 	image := m.imageRef()
+	resolvPath, err := ctr.ResolveConfSource(dataDir)
+	if err != nil {
+		return err
+	}
 
 	specOpts := []oci.SpecOpts{
 		oci.WithMounts([]specs.Mount{
@@ -104,6 +108,12 @@ func (m *Manager) EnsureBot(ctx context.Context, botID string) error {
 				Type:        "bind",
 				Source:      dataDir,
 				Options:     []string{"rbind", "rw"},
+			},
+			{
+				Destination: "/etc/resolv.conf",
+				Type:        "bind",
+				Source:      resolvPath,
+				Options:     []string{"rbind", "ro"},
 			},
 		}),
 	}
@@ -155,10 +165,17 @@ func (m *Manager) Start(ctx context.Context, botID string) error {
 		return err
 	}
 
-	_, err := m.service.StartTask(ctx, m.containerID(botID), &ctr.StartTaskOptions{
+	task, err := m.service.StartTask(ctx, m.containerID(botID), &ctr.StartTaskOptions{
 		UseStdio: false,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if err := ctr.SetupNetwork(ctx, task, m.containerID(botID)); err != nil {
+		_ = m.service.StopTask(ctx, m.containerID(botID), &ctr.StopTaskOptions{Force: true})
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) Stop(ctx context.Context, botID string, timeout time.Duration) error {
@@ -176,6 +193,9 @@ func (m *Manager) Delete(ctx context.Context, botID string) error {
 		return err
 	}
 
+	if task, taskErr := m.service.GetTask(ctx, m.containerID(botID)); taskErr == nil {
+		_ = ctr.RemoveNetwork(ctx, task, m.containerID(botID))
+	}
 	_ = m.service.DeleteTask(ctx, m.containerID(botID), &ctr.DeleteTaskOptions{Force: true})
 	return m.service.DeleteContainer(ctx, m.containerID(botID), &ctr.DeleteContainerOptions{
 		CleanupSnapshot: true,

@@ -75,6 +75,10 @@ func (m *Manager) CreateVersion(ctx context.Context, userID string) (*VersionInf
 	if dataMount == "" {
 		dataMount = config.DefaultDataMount
 	}
+	resolvPath, err := ctr.ResolveConfSource(dataDir)
+	if err != nil {
+		return nil, err
+	}
 
 	specOpts := []oci.SpecOpts{
 		oci.WithMounts([]specs.Mount{
@@ -89,6 +93,12 @@ func (m *Manager) CreateVersion(ctx context.Context, userID string) (*VersionInf
 				Type:        "bind",
 				Source:      dataDir,
 				Options:     []string{"rbind", "rw"},
+			},
+			{
+				Destination: "/etc/resolv.conf",
+				Type:        "bind",
+				Source:      resolvPath,
+				Options:     []string{"rbind", "ro"},
 			},
 		}),
 	}
@@ -202,6 +212,10 @@ func (m *Manager) RollbackVersion(ctx context.Context, userID string, version in
 	if dataMount == "" {
 		dataMount = config.DefaultDataMount
 	}
+	resolvPath, err := ctr.ResolveConfSource(dataDir)
+	if err != nil {
+		return err
+	}
 	specOpts := []oci.SpecOpts{
 		oci.WithMounts([]specs.Mount{
 			{
@@ -215,6 +229,12 @@ func (m *Manager) RollbackVersion(ctx context.Context, userID string, version in
 				Type:        "bind",
 				Source:      dataDir,
 				Options:     []string{"rbind", "rw"},
+			},
+			{
+				Destination: "/etc/resolv.conf",
+				Type:        "bind",
+				Source:      resolvPath,
+				Options:     []string{"rbind", "ro"},
 			},
 		}),
 	}

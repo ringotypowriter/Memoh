@@ -27,11 +27,7 @@ description = "Install Go dependencies"
 run = "go mod download"
 
 [tasks.lima-up]
-run = """
-if [ "$(uname -s)" = "Darwin" ]; then
-  limactl start default
-fi
-"""
+run = "scripts/lima-up.sh"
 
 [tasks.lima-down]
 run = """
@@ -69,9 +65,9 @@ run = "cd packages/cli && npm install -g"
 description = "Build Go CLI binary and install to local bin"
 run = """
 mkdir -p ~/.local/bin
-go build -trimpath -ldflags "-s -w" -o ~/.local/bin/container-cli ./cmd/cli
-chmod +x ~/.local/bin/container-cli
-echo "✓ CLI binary installed to ~/.local/bin/container-cli"
+go build -trimpath -ldflags "-s -w" -o ~/.local/bin/memoh-cli ./cmd/cli
+chmod +x ~/.local/bin/memoh-cli
+echo "✓ CLI binary installed to ~/.local/bin/memoh-cli"
 """
 
 [tasks.mcp-image-up]
