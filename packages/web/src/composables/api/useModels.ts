@@ -33,6 +33,15 @@ export function useModelList(providerId: Ref<string | undefined>) {
   }
 }
 
+// ---- Query: 获取所有模型（跨 Provider） ----
+
+export function useAllModels() {
+  return useQuery({
+    key: ['all-models'],
+    query: () => fetchApi<ModelInfo[]>('/models'),
+  })
+}
+
 // ---- Mutations ----
 
 export function useCreateModel() {

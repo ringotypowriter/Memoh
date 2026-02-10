@@ -28,6 +28,14 @@ export function useProviderList(clientType: Ref<string>) {
   })
 }
 
+/** 获取所有 Provider（无过滤） */
+export function useAllProviders() {
+  return useQuery({
+    key: ['all-providers'],
+    query: () => fetchApi<ProviderWithId[]>('/providers'),
+  })
+}
+
 // ---- Mutations ----
 
 export function useCreateProvider() {

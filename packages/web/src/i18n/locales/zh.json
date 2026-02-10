@@ -27,6 +27,7 @@
   },
   "sidebar": {
     "chat": "对话",
+    "bots": "Bots",
     "models": "模型管理",
     "settings": "设置",
     "home": "首页",
@@ -117,5 +118,63 @@
   },
   "home": {
     "title": "首页"
+  },
+  "bots": {
+    "title": "Bots",
+    "searchPlaceholder": "搜索 Bot…",
+    "createBot": "新建 Bot",
+    "editBot": "编辑 Bot",
+    "deleteConfirm": "确定要删除这个 Bot 吗？",
+    "emptyTitle": "暂无 Bot",
+    "emptyDescription": "点击右上角按钮创建你的第一个 Bot",
+    "displayName": "名称",
+    "displayNamePlaceholder": "给你的 Bot 起个名字",
+    "avatarUrl": "头像链接",
+    "avatarUrlPlaceholder": "输入头像图片地址",
+    "type": "类型",
+    "typePlaceholder": "选择 Bot 类型",
+    "active": "运行中",
+    "inactive": "未启用",
+    "createdAt": "创建于",
+    "tabs": {
+      "overview": "概览",
+      "memory": "记忆",
+      "channels": "渠道",
+      "mcp": "MCP",
+      "subagents": "子智能体",
+      "history": "对话历史",
+      "settings": "设置"
+    },
+    "settings": {
+      "chatModel": "对话模型",
+      "memoryModel": "记忆模型",
+      "embeddingModel": "向量模型",
+      "maxContextLoadTime": "最大上下文加载时间",
+      "language": "语言",
+      "allowGuest": "允许游客访问",
+      "searchModel": "搜索模型…",
+      "noModel": "暂无可选模型",
+      "saveSuccess": "设置已保存",
+      "save": "保存设置"
+    },
+    "channels": {
+      "title": "渠道",
+      "addChannel": "添加渠道",
+      "selectType": "选择渠道类型",
+      "configured": "已配置",
+      "notConfigured": "未配置",
+      "emptyTitle": "暂无渠道",
+      "emptyDescription": "点击下方按钮为 Bot 添加消息渠道",
+      "credentials": "凭据配置",
+      "saveSuccess": "渠道配置已保存",
+      "saveFailed": "保存失败",
+      "requiredField": "{field} 为必填项",
+      "save": "保存配置",
+      "status": "状态",
+      "statusActive": "启用",
+      "statusInactive": "停用",
+      "deleteConfirm": "确定要移除这个渠道吗？",
+      "noAvailableTypes": "所有渠道类型均已配置"
+    }
   }
 }

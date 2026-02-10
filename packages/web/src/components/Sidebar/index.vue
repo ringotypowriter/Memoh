@@ -81,9 +81,14 @@ const sidebarInfo = computed(() => [
     icon: ['far', 'comments'],
   },
   {
+    title: t('sidebar.bots'),
+    name: 'bots',
+    icon: ['fas', 'robot'],
+  },
+  {
     title: t('sidebar.models'),
     name: 'models',
-    icon: ['fas', 'robot'],
+    icon: ['fas', 'cubes'],
   },
   {
     title: t('sidebar.settings'),

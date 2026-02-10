@@ -4,8 +4,8 @@ import { useColorMode, useStorage } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 
 export interface Settings {
-  language: Locale
-  theme: 'light' | 'dark'
+  language: Locale;
+  theme: 'light' | 'dark';
 }
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -14,8 +14,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const language = useStorage<Locale>('language', 'zh')
   const theme = useStorage<'light' | 'dark'>('theme', 'light')
 
-  // 初始化时将 colorMode 与 theme 同步，避免 useColorMode 默认 'auto' 导致闪烁
+  // 立即同步持久化的设置到运行时状态
   colorMode.value = theme.value
+  i18n.locale.value = language.value
 
   const setLanguage = (value: Locale) => {
     language.value = value
@@ -26,7 +27,7 @@ export const useSettingsStore = defineStore('settings', () => {
     theme.value = value
     colorMode.value = value
   }
-  
+
   return {
     language,
     theme,

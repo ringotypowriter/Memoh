@@ -1,4 +1,6 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
+import { h } from 'vue'
+import { RouterView } from 'vue-router'
 import { i18nRef } from './i18n'
 
 const routes = [
@@ -33,6 +35,27 @@ const routes = [
       meta: {
         breadcrumb: i18nRef('home.title')
       }
+    }, {
+      path: 'bots',
+      component: { render: () => h(RouterView) },
+      meta: {
+        breadcrumb: i18nRef('sidebar.bots')
+      },
+      children: [
+        {
+          name: 'bots',
+          path: '',
+          component: () => import('@/pages/bots/index.vue'),
+        },
+        {
+          name: 'bot-detail',
+          path: ':botId',
+          component: () => import('@/pages/bots/detail.vue'),
+          meta: {
+            breadcrumb: (route: RouteLocationNormalized) => route.params.botId,
+          },
+        },
+      ],
     }, {
       name: 'models',
       path: 'models',

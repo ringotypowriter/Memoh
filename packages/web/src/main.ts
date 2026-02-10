@@ -19,6 +19,11 @@ import {
   faMagnifyingGlass,
   faPlus,
   faSpinner,
+  faCubes,
+  faPenToSquare,
+  faCheck,
+  faEye,
+  faEyeSlash,
 } from '@fortawesome/free-solid-svg-icons'
 import {
   faRectangleList,
@@ -33,6 +38,11 @@ library.add(
   faMagnifyingGlass,
   faPlus,
   faSpinner,
+  faCubes,
+  faPenToSquare,
+  faCheck,
+  faEye,
+  faEyeSlash,
   faRectangleList,
   faTrashCan,
   faComments,
