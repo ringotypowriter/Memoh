@@ -4,7 +4,7 @@ import { createAgent } from '../agent'
 import { createAuthFetcher, getBaseUrl, getBraveConfig } from '../index'
 import { ModelConfig } from '../types'
 import { bearerMiddleware } from '../middlewares/bearer'
-import { AgentSkillModel, AllowedActionModel, AttachmentModel, IdentityContextModel, MCPConnectionModel, ModelConfigModel, ScheduleModel } from '../models'
+import { AgentSkillModel, AllowedActionModel, AttachmentModel, IdentityContextModel, ModelConfigModel, ScheduleModel } from '../models'
 import { allActions } from '../types'
 
 const AgentModel = z.object({
@@ -18,7 +18,6 @@ const AgentModel = z.object({
   skills: z.array(z.string()),
   identity: IdentityContextModel,
   attachments: z.array(AttachmentModel).optional().default([]),
-  mcpConnections: z.array(MCPConnectionModel).optional().default([]),
 })
 
 export const chatModule = new Elysia({ prefix: '/chat' })
@@ -33,7 +32,6 @@ export const chatModule = new Elysia({ prefix: '/chat' })
       currentChannel: body.currentChannel,
       allowedActions: body.allowedActions,
       identity: body.identity,
-      mcpConnections: body.mcpConnections,
       auth: {
         bearer: bearer!,
         baseUrl: getBaseUrl(),
@@ -63,7 +61,6 @@ export const chatModule = new Elysia({ prefix: '/chat' })
         currentChannel: body.currentChannel,
         allowedActions: body.allowedActions,
         identity: body.identity,
-        mcpConnections: body.mcpConnections,
         auth: {
           bearer: bearer!,
           baseUrl: getBaseUrl(),
@@ -99,7 +96,6 @@ export const chatModule = new Elysia({ prefix: '/chat' })
       channels: body.channels,
       currentChannel: body.currentChannel,
       identity: body.identity,
-      mcpConnections: body.mcpConnections,
       auth: {
         bearer: bearer!,
         baseUrl: getBaseUrl(),

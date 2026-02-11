@@ -37,6 +37,7 @@ type ContainerdHandler struct {
 	cfg            config.MCPConfig
 	namespace      string
 	logger         *slog.Logger
+	toolGateway    *mcp.ToolGatewayService
 	mcpMu          sync.Mutex
 	mcpSess        map[string]*mcpSession
 	mcpStdioMu     sync.Mutex
@@ -135,6 +136,7 @@ func (h *ContainerdHandler) Register(e *echo.Echo) {
 	fs.DELETE("", h.DeleteFS)
 	root.POST("/mcp-stdio", h.CreateMCPStdio)
 	root.POST("/mcp-stdio/:session_id", h.HandleMCPStdio)
+	root.POST("/tools", h.HandleMCPTools)
 }
 
 // CreateContainer godoc

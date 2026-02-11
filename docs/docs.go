@@ -2152,6 +2152,59 @@ const docTemplate = `{
                 }
             }
         },
+        "/bots/{bot_id}/tools": {
+            "post": {
+                "description": "MCP endpoint for tool discovery and invocation.",
+                "tags": [
+                    "containerd"
+                ],
+                "summary": "Unified MCP tools gateway",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "JSON-RPC request",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "JSON-RPC response: {jsonrpc,id,result|error}",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/bots/{id}": {
             "get": {
                 "description": "Get a bot by ID (owner/admin only)",

@@ -155,13 +155,22 @@ func (h *MemoryHandler) ChatSearch(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	chatObj, err := h.chatService.Get(c.Request().Context(), chatID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "chat not found")
+	}
+	botID := strings.TrimSpace(chatObj.BotID)
 
 	// Search across all enabled namespaces and merge results.
 	var allResults []memory.MemoryItem
 	for _, scope := range scopes {
 		filters := buildNamespaceFilters(scope.Namespace, scope.ScopeID, payload.Filters)
+		if botID != "" {
+			filters["botId"] = botID
+		}
 		req := memory.SearchRequest{
 			Query:            payload.Query,
+			BotID:            botID,
 			RunID:            payload.RunID,
 			Limit:            payload.Limit,
 			Filters:          filters,

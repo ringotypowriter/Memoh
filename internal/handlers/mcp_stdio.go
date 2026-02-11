@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	sdkjsonrpc "github.com/modelcontextprotocol/go-sdk/jsonrpc"
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	ctr "github.com/memohai/memoh/internal/containerd"
 	mcptools "github.com/memohai/memoh/internal/mcp"
@@ -187,9 +189,19 @@ func (h *ContainerdHandler) startContainerdMCPCommandSession(ctx context.Context
 		stdin:   execSession.Stdin,
 		stdout:  execSession.Stdout,
 		stderr:  execSession.Stderr,
-		pending: make(map[string]chan mcptools.JSONRPCResponse),
+		pending: make(map[string]chan *sdkjsonrpc.Response),
 		closed:  make(chan struct{}),
 	}
+	transport := &sdkmcp.IOTransport{
+		Reader: sess.stdout,
+		Writer: sess.stdin,
+	}
+	conn, err := transport.Connect(ctx)
+	if err != nil {
+		sess.closeWithError(err)
+		return nil, err
+	}
+	sess.conn = conn
 	h.startMCPStderrLogger(execSession.Stderr, containerID)
 	go sess.readLoop()
 	go func() {
@@ -334,9 +346,19 @@ func (h *ContainerdHandler) startLimaMCPCommandSession(containerID string, req M
 		stdout:  stdout,
 		stderr:  stderr,
 		cmd:     cmd,
-		pending: make(map[string]chan mcptools.JSONRPCResponse),
+		pending: make(map[string]chan *sdkjsonrpc.Response),
 		closed:  make(chan struct{}),
 	}
+	transport := &sdkmcp.IOTransport{
+		Reader: sess.stdout,
+		Writer: sess.stdin,
+	}
+	conn, err := transport.Connect(context.Background())
+	if err != nil {
+		sess.closeWithError(err)
+		return nil, err
+	}
+	sess.conn = conn
 
 	h.startMCPStderrLogger(stderr, containerID)
 	go sess.readLoop()

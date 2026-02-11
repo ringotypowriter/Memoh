@@ -25,6 +25,10 @@ import (
 	"github.com/memohai/memoh/internal/handlers"
 	"github.com/memohai/memoh/internal/logger"
 	"github.com/memohai/memoh/internal/mcp"
+	mcpmemory "github.com/memohai/memoh/internal/mcp/providers/memory"
+	mcpmessage "github.com/memohai/memoh/internal/mcp/providers/message"
+	mcpschedule "github.com/memohai/memoh/internal/mcp/providers/schedule"
+	mcpfederation "github.com/memohai/memoh/internal/mcp/sources/federation"
 	"github.com/memohai/memoh/internal/memory"
 	"github.com/memohai/memoh/internal/models"
 	"github.com/memohai/memoh/internal/policy"
@@ -187,6 +191,23 @@ func main() {
 	scheduleHandler := handlers.NewScheduleHandler(logger.L, scheduleService, botService, accountService)
 	subagentService := subagent.NewService(logger.L, queries)
 	subagentHandler := handlers.NewSubagentHandler(logger.L, subagentService, botService, accountService)
+	messageToolExecutor := mcpmessage.NewExecutor(logger.L, channelManager, channelRegistry)
+	scheduleToolExecutor := mcpschedule.NewExecutor(logger.L, scheduleService)
+	memoryToolExecutor := mcpmemory.NewExecutor(logger.L, memoryService, chatService, accountService)
+	federationGateway := handlers.NewMCPFederationGateway(logger.L, containerdHandler)
+	federatedToolSource := mcpfederation.NewSource(logger.L, federationGateway, mcpConnectionsService)
+	toolGatewayService := mcp.NewToolGatewayService(
+		logger.L,
+		[]mcp.ToolExecutor{
+			messageToolExecutor,
+			scheduleToolExecutor,
+			memoryToolExecutor,
+		},
+		[]mcp.ToolSource{
+			federatedToolSource,
+		},
+	)
+	containerdHandler.SetToolGatewayService(toolGatewayService)
 	srv := server.NewServer(logger.L, addr, cfg.Auth.JWTSecret, pingHandler, authHandler, memoryHandler, embeddingsHandler, chatHandler, swaggerHandler, providersHandler, modelsHandler, settingsHandler, preauthHandler, bindHandler, scheduleHandler, subagentHandler, containerdHandler, channelHandler, usersHandler, mcpHandler, cliHandler, webHandler)
 
 	if err := srv.Start(); err != nil {

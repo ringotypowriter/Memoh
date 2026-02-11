@@ -1,10 +1,9 @@
 import { generateText, ImagePart, LanguageModelUsage, ModelMessage, stepCountIs, streamText, UserModelMessage } from 'ai'
-import { AgentInput, AgentParams, AgentSkill, allActions, HTTPMCPConnection, MCPConnection, Schedule, StdioMCPConnection } from './types'
+import { AgentInput, AgentParams, AgentSkill, allActions, Schedule } from './types'
 import { system, schedule, user, subagentSystem } from './prompts'
 import { AuthFetcher } from './index'
 import { createModel } from './model'
 import { AgentAction } from './types/action'
-import { getTools } from './tools'
 import {
   extractAttachmentsFromText,
   stripAttachmentsFromMessages,
@@ -21,7 +20,6 @@ export const createAgent = ({
   language = 'Same as the user input',
   allowedActions = allActions,
   channels = [],
-  mcpConnections = [],
   skills = [],
   currentChannel = 'Unknown Channel',
   identity = {
@@ -47,18 +45,6 @@ export const createAgent = ({
     return enabledSkills.map(skill => skill.name)
   }
 
-  const getDefaultMCPConnections = (): MCPConnection[] => {
-    const fs: HTTPMCPConnection = {
-      type: 'http',
-      name: 'fs',
-      url: `${auth.baseUrl}/bots/${identity.botId}/container/fs-mcp`,
-      headers: {
-        'Authorization': `Bearer ${auth.bearer}`,
-      },
-    }
-    return [fs]
-  }
-  
   const loadSystemFiles = async () => {
     if (!auth?.bearer || !identity.botId) {
       return {
@@ -103,26 +89,38 @@ export const createAgent = ({
   }
 
   const getAgentTools = async () => {
-    const tools = getTools(allowedActions, {
-      fetch,
-      model: modelConfig,
-      brave,
-      identity,
-      auth,
-      enableSkill,
-    })
-    const defaultMCPConnections = getDefaultMCPConnections()
-    const { tools: mcpTools, close: closeMCP } = await getMCPTools([
-      ...defaultMCPConnections,
-      ...mcpConnections,
-    ], {
-      botId: identity.botId,
-      auth,
-      fetch,
-    })
-    Object.assign(tools, mcpTools)
+    const baseUrl = auth.baseUrl.replace(/\/$/, '')
+    const botId = identity.botId.trim()
+    if (!baseUrl || !botId) {
+      return {
+        tools: {},
+        close: async () => {},
+      }
+    }
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${auth.bearer}`,
+    }
+    if (identity.sessionId) {
+      headers['X-Memoh-Chat-Id'] = identity.sessionId
+    }
+    if (identity.channelIdentityId) {
+      headers['X-Memoh-Channel-Identity-Id'] = identity.channelIdentityId
+    }
+    if (identity.sessionToken) {
+      headers['X-Memoh-Session-Token'] = identity.sessionToken
+    }
+    if (identity.currentPlatform) {
+      headers['X-Memoh-Current-Platform'] = identity.currentPlatform
+    }
+    if (identity.replyTarget) {
+      headers['X-Memoh-Reply-Target'] = identity.replyTarget
+    }
+    if (identity.displayName) {
+      headers['X-Memoh-Display-Name'] = identity.displayName
+    }
+    const { tools: mcpTools, close: closeMCP } = await getMCPTools(`${baseUrl}/bots/${botId}/tools`, headers)
     return {
-      tools,
+      tools: mcpTools,
       close: closeMCP,
     }
   }
