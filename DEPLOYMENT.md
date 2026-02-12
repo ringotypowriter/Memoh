@@ -127,7 +127,7 @@ host = "postgres"
 password = "your_secure_password"  # Must change in config.toml
 
 [containerd]
-socket_path = "unix:///var/run/docker.sock"  # Use host Docker
+socket_path = "/run/containerd/containerd.sock"
 
 [qdrant]
 base_url = "http://qdrant:6334"

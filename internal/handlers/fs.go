@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -188,7 +190,8 @@ func (h *ContainerdHandler) getMCPSession(ctx context.Context, containerID strin
 
 func (h *ContainerdHandler) startContainerdMCPSession(ctx context.Context, containerID string) (*mcpSession, error) {
 	execSession, err := h.service.ExecTaskStreaming(ctx, containerID, ctr.ExecTaskRequest{
-		Args: []string{"/app/mcp"},
+		Args:    []string{"/app/mcp"},
+		FIFODir: h.mcpFIFODir(),
 	})
 	if err != nil {
 		return nil, err
@@ -207,11 +210,15 @@ func (h *ContainerdHandler) startContainerdMCPSession(ctx context.Context, conta
 	go func() {
 		_, err := execSession.Wait()
 		if err != nil {
+			if isBenignMCPSessionExit(err) {
+				sess.closeWithError(io.EOF)
+				return
+			}
 			h.logger.Error("mcp session exited", slog.Any("error", err), slog.String("container_id", containerID))
 			sess.closeWithError(err)
-		} else {
-			sess.closeWithError(io.EOF)
+			return
 		}
+		sess.closeWithError(io.EOF)
 	}()
 
 	return sess, nil
@@ -273,11 +280,15 @@ func (h *ContainerdHandler) startLimaMCPSession(containerID string) (*mcpSession
 	go sess.readLoop()
 	go func() {
 		if err := cmd.Wait(); err != nil {
+			if isBenignMCPSessionExit(err) {
+				sess.closeWithError(io.EOF)
+				return
+			}
 			h.logger.Error("mcp session exited", slog.Any("error", err), slog.String("container_id", containerID))
 			sess.closeWithError(err)
-		} else {
-			sess.closeWithError(io.EOF)
+			return
 		}
+		sess.closeWithError(io.EOF)
 	}()
 
 	return sess, nil
@@ -320,9 +331,30 @@ func (h *ContainerdHandler) startMCPStderrLogger(stderr io.ReadCloser, container
 			h.logger.Warn("mcp stderr", slog.String("container_id", containerID), slog.String("message", line))
 		}
 		if err := scanner.Err(); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) || strings.Contains(err.Error(), "closed pipe") {
+				return
+			}
 			h.logger.Error("mcp stderr read failed", slog.Any("error", err), slog.String("container_id", containerID))
 		}
 	}()
+}
+
+func isBenignMCPSessionExit(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrClosedPipe) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "code = canceled") || strings.Contains(msg, "context canceled") || strings.Contains(msg, "closed pipe")
+}
+
+func (h *ContainerdHandler) mcpFIFODir() string {
+	if root := strings.TrimSpace(h.cfg.DataRoot); root != "" {
+		return filepath.Join(root, ".containerd-fifo")
+	}
+	return "/tmp/memoh-containerd-fifo"
 }
 
 func (s *mcpSession) readLoop() {

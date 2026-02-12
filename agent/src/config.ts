@@ -4,6 +4,7 @@ import { parse } from 'toml'
 type AgentGatewayConfig = {
   'agent_gateway': {
     host?: string
+    server_addr?: string
     port?: number
   },
   'server': {

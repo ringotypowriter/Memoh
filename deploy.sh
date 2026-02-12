@@ -44,12 +44,39 @@ if [ ! -f config.toml ]; then
     echo ""
 fi
 
-# Build MCP image
-echo -e "${GREEN}Building MCP image...${NC}"
-if docker build -f docker/Dockerfile.mcp -t memoh-mcp:latest . > /dev/null 2>&1; then
-    echo -e "${GREEN}✓ MCP image built successfully${NC}"
+# Prepare data root path for host/containerd compatibility
+MEMOH_DATA_ROOT="$(pwd)/.data/memoh"
+mkdir -p "${MEMOH_DATA_ROOT}"
+export MEMOH_DATA_ROOT
+if grep -q '^data_root[[:space:]]*=' config.toml; then
+    awk -v path="${MEMOH_DATA_ROOT}" '
+        $0 ~ /^data_root[[:space:]]*=/ { print "data_root = \"" path "\""; next }
+        { print }
+    ' config.toml > config.toml.tmp && mv config.toml.tmp config.toml
+fi
+echo -e "${GREEN}✓ Data root: ${MEMOH_DATA_ROOT}${NC}"
+echo ""
+
+# Prepare container runtime environment
+echo -e "${GREEN}Preparing container runtime environment...${NC}"
+if sh scripts/containerd-install.sh > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Container runtime environment is ready${NC}"
 else
-    echo -e "${YELLOW}⚠ MCP image build failed, will try to pull at runtime${NC}"
+    echo -e "${YELLOW}⚠ Failed to prepare container runtime environment, MCP build may be skipped${NC}"
+fi
+echo ""
+
+# Build MCP image on host with nerdctl
+MCP_IMAGE="docker.io/library/memoh-mcp:latest"
+echo -e "${GREEN}Building MCP image on host with nerdctl...${NC}"
+if command -v nerdctl &> /dev/null && command -v buildctl &> /dev/null && command -v buildkitd &> /dev/null; then
+    if nerdctl build -f docker/Dockerfile.mcp -t "${MCP_IMAGE}" . > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ MCP image built successfully (on host)${NC}"
+    else
+        echo -e "${YELLOW}⚠ MCP image build failed on host, will try to pull at runtime${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ nerdctl/buildkit environment not found on host, skipping MCP build${NC}"
 fi
 echo ""
 

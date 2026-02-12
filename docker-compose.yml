@@ -1,5 +1,5 @@
+name: "memoh"
 services:
-  
   postgres:
     image: postgres:18.1-alpine
     container_name: memoh-postgres
@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: memoh
       POSTGRES_PASSWORD: memoh123
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./db/migrations:/docker-entrypoint-initdb.d:ro
     expose:
       - "5432"
@@ -38,26 +38,24 @@ services:
     networks:
       - memoh-network
 
-  docker-cli:
-    image: docker:27-cli
-    container_name: memoh-docker-cli
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - memoh_bot_data:/var/lib/memoh/data
-    command: ["tail", "-f", "/dev/null"]
-    restart: unless-stopped
-    networks:
-      - memoh-network
-
   server:
     build:
-      context: ./docker
-      dockerfile: Dockerfile.server
+      context: .
+      dockerfile: docker/Dockerfile.server
     container_name: memoh-server
+    pid: host
     volumes:
       - ./config.toml:/app/config.toml:ro
-      - /var/run/docker.sock:/var/run/docker.sock
-      - memoh_bot_data:/var/lib/memoh/data
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock
+      - /var/lib/containerd:/var/lib/containerd
+      - server_cni_state:/var/lib/cni
+      - ${MEMOH_DATA_ROOT:-/opt/memoh/data}:${MEMOH_DATA_ROOT:-/opt/memoh/data}
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     ports:
       - "8080:8080"
     depends_on:
@@ -106,7 +104,7 @@ volumes:
     driver: local
   qdrant_data:
     driver: local
-  memoh_bot_data:
+  server_cni_state:
     driver: local
 
 networks:

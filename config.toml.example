@@ -50,6 +50,7 @@ timeout_seconds = 10
 [agent_gateway]
 host = "127.0.0.1"
 port = 8081
+server_addr = ":8080"
 
 [brave]
 api_key = ""

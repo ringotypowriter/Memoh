@@ -178,6 +178,7 @@ func (h *ContainerdHandler) startContainerdMCPCommandSession(ctx context.Context
 		Args:    args,
 		Env:     env,
 		WorkDir: strings.TrimSpace(req.Cwd),
+		FIFODir: h.mcpFIFODir(),
 	})
 	if err != nil {
 		return nil, err
@@ -195,11 +196,15 @@ func (h *ContainerdHandler) startContainerdMCPCommandSession(ctx context.Context
 	go func() {
 		_, err := execSession.Wait()
 		if err != nil {
+			if isBenignMCPSessionExit(err) {
+				sess.closeWithError(io.EOF)
+				return
+			}
 			h.logger.Error("mcp stdio session exited", slog.Any("error", err), slog.String("container_id", containerID))
 			sess.closeWithError(err)
-		} else {
-			sess.closeWithError(io.EOF)
+			return
 		}
+		sess.closeWithError(io.EOF)
 	}()
 	return sess, nil
 }
@@ -342,11 +347,15 @@ func (h *ContainerdHandler) startLimaMCPCommandSession(containerID string, req M
 	go sess.readLoop()
 	go func() {
 		if err := cmd.Wait(); err != nil {
+			if isBenignMCPSessionExit(err) {
+				sess.closeWithError(io.EOF)
+				return
+			}
 			h.logger.Error("mcp stdio session exited", slog.Any("error", err), slog.String("container_id", containerID))
 			sess.closeWithError(err)
-		} else {
-			sess.closeWithError(io.EOF)
+			return
 		}
+		sess.closeWithError(io.EOF)
 	}()
 
 	return sess, nil

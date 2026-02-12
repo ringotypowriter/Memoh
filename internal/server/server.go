@@ -42,7 +42,7 @@ func NewServer(log *slog.Logger, addr string, jwtSecret string, pingHandler *han
 	}))
 	e.Use(auth.JWTMiddleware(jwtSecret, func(c echo.Context) bool {
 		path := c.Request().URL.Path
-		if path == "/ping" || path == "/api/swagger.json" || path == "/auth/login" {
+		if path == "/ping" || path == "/health" || path == "/api/swagger.json" || path == "/auth/login" {
 			return true
 		}
 		if strings.HasPrefix(path, "/api/docs") {

@@ -17,10 +17,15 @@ func NewPingHandler(log *slog.Logger) *PingHandler {
 
 func (h *PingHandler) Register(e *echo.Echo) {
 	e.GET("/ping", h.Ping)
+	e.HEAD("/health", h.PingHead)
 }
 
 func (h *PingHandler) Ping(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{
 		"status": "ok",
 	})
+}
+
+func (h *PingHandler) PingHead(c echo.Context) error {
+	return c.NoContent(http.StatusOK)
 }

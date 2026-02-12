@@ -4,7 +4,7 @@ level = "info"
 format = "text"
 
 [server]
-addr = ":8080"
+addr = "server:8080"
 
 ## Admin
 [admin]
@@ -19,13 +19,13 @@ jwt_expires_in = "168h"
 
 ## Docker configuration
 [containerd]
-socket_path = "unix:///var/run/docker.sock"
+socket_path = "/run/containerd/containerd.sock"
 namespace = "default"
 
 [mcp]
-busybox_image = "memoh-mcp:latest"
+busybox_image = "docker.io/library/memoh-mcp:latest"
 snapshotter = "overlayfs"
-data_root = "/var/lib/memoh/data"
+data_root = "/opt/memoh/data"
 data_mount = "/data"
 
 ## Postgres configuration
@@ -48,6 +48,7 @@ timeout_seconds = 10
 [agent_gateway]
 host = "agent"
 port = 8081
+server_addr = "server:8080"
 
 [brave]
 api_key = ""

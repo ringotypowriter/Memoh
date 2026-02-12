@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -673,15 +672,8 @@ func (s *DefaultService) ExecTaskStreaming(ctx context.Context, containerID stri
 	if req.Terminal {
 		ioOpts = append(ioOpts, cio.WithTerminal)
 	}
-	fifoDir := strings.TrimSpace(req.FIFODir)
-	if fifoDir == "" {
-		if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
-			fifoDir = filepath.Join(homeDir, ".memoh", "containerd-fifo")
-		} else {
-			fifoDir = "/tmp/memoh-containerd-fifo"
-		}
-	}
-	if err := os.MkdirAll(fifoDir, 0o755); err != nil {
+	fifoDir, err := resolveExecFIFODir(req.FIFODir)
+	if err != nil {
 		_ = stdinR.Close()
 		_ = stdinW.Close()
 		_ = stdoutR.Close()
@@ -750,6 +742,27 @@ func (s *DefaultService) ExecTaskStreaming(ctx context.Context, containerID stri
 		Wait:   wait,
 		Close:  closeFn,
 	}, nil
+}
+
+func resolveExecFIFODir(preferred string) (string, error) {
+	candidates := make([]string, 0, 3)
+	if p := strings.TrimSpace(preferred); p != "" {
+		candidates = append(candidates, p)
+	}
+	candidates = append(candidates, "/var/lib/containerd/memoh-fifo", "/tmp/memoh-containerd-fifo")
+
+	var lastErr error
+	for _, dir := range candidates {
+		if err := os.MkdirAll(dir, 0o755); err == nil {
+			return dir, nil
+		} else {
+			lastErr = err
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no fifo directory candidate available")
+	}
+	return "", lastErr
 }
 
 func (s *DefaultService) ListContainersByLabel(ctx context.Context, key, value string) ([]containerd.Container, error) {

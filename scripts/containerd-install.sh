@@ -7,7 +7,10 @@ if [ "$(uname -s)" = "Darwin" ]; then
   exit $?
 fi
 
-if command -v containerd >/dev/null 2>&1 && command -v nerdctl >/dev/null 2>&1 && command -v buildctl >/dev/null 2>&1 && command -v buildkitd >/dev/null 2>&1; then
+if command -v containerd >/dev/null 2>&1 \
+  && command -v nerdctl >/dev/null 2>&1 \
+  && command -v buildctl >/dev/null 2>&1 \
+  && command -v buildkitd >/dev/null 2>&1; then
   containerd --version
   nerdctl --version
   buildctl --version
