@@ -35,19 +35,36 @@ Default admin credentials:
 If you prefer not to use the automated script:
 
 ```bash
-# 1. Create configuration file
+# 1. Create the configuration file
 cp docker/config/config.docker.toml config.toml
 
-# 2. Edit configuration (Important!)
+# 2. Edit the configuration (recommended to review key options)
 nano config.toml
 
-# 3. Build MCP image
-docker build -f docker/Dockerfile.mcp -t memoh-mcp:latest .
+# 3. Prepare data_root on the host
+export MEMOH_DATA_ROOT="$(pwd)/.data/memoh"
+mkdir -p "$MEMOH_DATA_ROOT"
 
-# 4. Start services
+# 4. Update data_root in config.toml to the absolute host path
+#    If it does not exist, add the following line manually:
+#    data_root = "/absolute/path/to/.data/memoh"
+awk -v path="$MEMOH_DATA_ROOT" '
+  $0 ~ /^data_root[[:space:]]*=/ { print "data_root = \"" path "\""; next }
+  { print }
+' config.toml > config.toml.tmp && mv config.toml.tmp config.toml
+
+# 5. Prepare containerd / nerdctl environment
+#    Only for Debian-based distributions!
+sh scripts/containerd-install.sh || true
+
+# 6. Build the MCP image on the host using nerdctl + buildkit
+#    This step requires nerdctl, buildctl, and buildkitd to be available
+nerdctl build -f docker/Dockerfile.mcp -t docker.io/library/memoh-mcp:latest .
+
+# 7. Start all services
 docker compose up -d
 
-# 5. View logs
+# 8. View logs
 docker compose logs -f
 ```
 
