@@ -87,6 +87,11 @@ type ContainerLifecycle interface {
 	CleanupBotContainer(ctx context.Context, botID string) error
 }
 
+// RuntimeChecker produces runtime check items for a bot.
+type RuntimeChecker interface {
+	CheckBot(ctx context.Context, botID string) []BotCheck
+}
+
 const (
 	BotTypePersonal = "personal"
 	BotTypePublic   = "public"

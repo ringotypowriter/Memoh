@@ -23,6 +23,7 @@ type Service struct {
 	queries            *sqlc.Queries
 	logger             *slog.Logger
 	containerLifecycle ContainerLifecycle
+	checkers           []RuntimeChecker
 }
 
 const (
@@ -54,6 +55,13 @@ func NewService(log *slog.Logger, queries *sqlc.Queries) *Service {
 // SetContainerLifecycle registers a container lifecycle handler for bot operations.
 func (s *Service) SetContainerLifecycle(lc ContainerLifecycle) {
 	s.containerLifecycle = lc
+}
+
+// AddRuntimeChecker registers an additional runtime checker.
+func (s *Service) AddRuntimeChecker(c RuntimeChecker) {
+	if c != nil {
+		s.checkers = append(s.checkers, c)
+	}
 }
 
 // AuthorizeAccess checks whether userID may access the given bot.
@@ -835,6 +843,11 @@ func (s *Service) buildRuntimeChecks(ctx context.Context, row sqlc.Bot) ([]BotCh
 		dataCheck.Detail = statErr.Error()
 	}
 	checks = append(checks, dataCheck)
+
+	botID := uuid.UUID(row.ID.Bytes).String()
+	for _, checker := range s.checkers {
+		checks = append(checks, checker.CheckBot(ctx, botID)...)
+	}
 
 	return checks, nil
 }
