@@ -6,7 +6,7 @@
 <div align="center">
   <img src="./assets/logo.png" alt="Memoh" width="100" height="100">
   <h1>Memoh</h1>
-  <p>多用户，结构化记忆，容器化的AI Agent系统</p>
+  <p>多用户、结构化记忆、容器化的 AI Agent 系统。</p>
   <div align="center">
     <img src="https://img.shields.io/github/package-json/v/memohai/Memoh" alt="Version" />
     <img src="https://img.shields.io/github/license/memohai/Memoh" alt="License" />
@@ -23,48 +23,56 @@
   <hr>
 </div>
 
-Memoh 是一个 AI Agent 系统平台。用户可以通过 Telegram、Discord、飞书(Lark) 等渠道创建自己的 AI 机器人并与之对话。每个 bot 都有独立的容器和记忆系统，可编辑文件、执行命令并自我构建——与 [OpenClaw](https://openclaw.ai) 类似，Memoh 为多 bot 管理提供了更安全、灵活和可扩展的解决方案。
-
-## 为什么选择 Memoh？
-
-OpenClaw、Clawdbot、Moltbot 固然酷炫，但存在诸多不足：稳定性欠佳、安全性争议、配置繁琐、以及高额 token 消耗。如果你正在寻找一款稳定、安全的 Bot SaaS 方案，不妨关注我们的开源产品——Memoh。
-
-Memoh 是一款支持多 bot 的 agent 服务，采用 Golang 编写，可完全通过图形化界面配置 bot 以及 Channel、MCP、Skills 等设置。我们使用 Containerd 为每个 bot 提供容器级隔离，并大量借鉴了 OpenClaw 的 Agent 设计思路。
-
-Memoh Bot 在记忆层进行了深度工程化，借鉴 Mem0 的设计理念，通过对每轮对话进行知识存储，实现更精准的记忆召回。
-
-Memoh Bot 能够区分并记忆来自多个人类/Bot 的请求，可在任意群聊中工作。你可以用 Memoh 组建 bot 团队，或为家人准备 Memoh 账号，让 bot 管理日常家庭事务。
-
-## 特性
-- **多 Bot 管理**：可创建多个 bot，人类与 bot、bot 与 bot 之间可互相私聊、群聊或协作
-- **容器化**：每个 bot 运行在独立隔离的容器中，可在容器内自由执行命令、编辑文件、访问网络，宛如拥有自己的电脑
-- **记忆工程**：每次聊天都会存入数据库，默认加载最近 24 小时的上下文；每轮对话的内容会被存储为记忆，可通过语义检索被 bot 召回
-- **多平台支持**：支持 Telegram、飞书(Lark) 等平台
-- **简单易用**：通过图形化界面配置 bot 及 Provider、Model、Memory、Channel、MCP、Skills 等设置，无需编写代码即可快速搭建自己的 AI 机器人
-- **定时任务**：支持使用 cron 表达式定时执行命令
-- 更多...
-
-## 路线图
-
-详情请参阅 [Roadmap Version 0.1](https://github.com/memohai/Memoh/issues/2)。
+Memoh 是一个 AI Agent 系统平台。用户可通过 Telegram、Discord、飞书(Lark) 等创建自己的 AI 机器人并与之对话。每个 bot 拥有独立的容器与记忆系统，可编辑文件、执行命令并自我构建——与 [OpenClaw](https://openclaw.ai) 类似，Memoh 为多 bot 管理提供更安全、灵活、可扩展的解决方案。
 
 ## 快速开始
 
-### Docker 部署（推荐）
-
-最快的部署方式：
+一键安装（**需先安装 [Docker](https://www.docker.com/get-started/)**）：
 
 ```bash
-git clone https://github.com/memohai/Memoh.git
-cd Memoh
-./deploy.sh
+curl -fsSL https://raw.githubusercontent.com/memohai/Memoh/main/scripts/install.sh | sh
 ```
 
-部署完成后访问 http://localhost。详见 [Docker 部署指南](README_DOCKER.md)。
+*静默安装（全部默认）：`curl -fsSL ... | sh -s -- -y`*
 
-### 开发环境
+或手动部署：
 
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+```bash
+git clone --depth 1 https://github.com/memohai/Memoh.git
+cd Memoh
+docker compose up -d
+```
+
+启动后访问 http://localhost。默认登录：`admin` / `admin123`
+
+自定义配置与生产部署请参阅 [DEPLOYMENT.md](DEPLOYMENT.md)。
+
+## 为什么选择 Memoh？
+
+OpenClaw、Clawdbot、Moltbot 固然出色，但在稳定性、安全性、配置复杂度与 token 成本上仍有不足。若你正在寻找稳定、安全的 Bot SaaS 方案，不妨考虑我们的开源 Memoh。
+
+Memoh 是基于 Golang 的多 bot agent 服务，提供 bot、Channel、MCP、Skills 等的完整图形化配置。我们使用 Containerd 为每个 bot 提供容器级隔离，并大量借鉴 OpenClaw 的 Agent 设计。
+
+Memoh Bot 具备深度工程化的记忆层，灵感来自 Mem0：对每轮对话进行知识存储，实现更精准的记忆检索。
+
+Memoh Bot 能区分并记忆多人与多 bot 的请求，在任意群聊中无缝协作。你可以用 Memoh 组建 bot 团队，或为家人配置账号，用 bot 管理日常家务。
+
+## 特性
+- **多 Bot 管理**：创建多个 bot；人与 bot、bot 与 bot 可私聊、群聊或协作。
+- **容器化**：每个 bot 运行在独立容器中，可在容器内自由执行命令、编辑文件、访问网络，宛如各自拥有一台电脑。
+- **记忆工程**：每次对话存入数据库，默认加载最近 24 小时上下文；每轮对话会存储为记忆，供 bot 通过语义检索召回。
+- **多平台**：支持 Telegram、飞书(Lark) 等。
+- **简单易用**：通过图形界面配置 Provider、Model、Memory、Channel、MCP、Skills 等，无需编码即可搭建自己的 AI 机器人。
+- **定时任务**：使用 cron 表达式在指定时间执行命令。
+- 更多…
+
+## 路线图
+
+详见 [Roadmap Version 0.1](https://github.com/memohai/Memoh/issues/2)。
+
+### 开发
+
+开发环境配置请参阅 [CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 
 ## Star History
 

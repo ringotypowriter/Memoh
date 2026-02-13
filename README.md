@@ -72,7 +72,7 @@ Please refer to the [Roadmap Version 0.1](https://github.com/memohai/Memoh/issue
 
 ### Development
 
-Refer to [CONTRIBUTING.md](CONTRIBUTING.md) for development setup.
+Refer to [CONTRIBUTING.md](.github/CONTRIBUTING.md) for development setup.
 
 ## Star History
 
