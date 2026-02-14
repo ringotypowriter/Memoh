@@ -97,12 +97,6 @@ services:
       - ${MEMOH_CONFIG:-./docker/config/config.docker.toml}:/config.toml:ro
     ports:
       - "8081:8081"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8081/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
     depends_on:
       - server
     restart: unless-stopped
