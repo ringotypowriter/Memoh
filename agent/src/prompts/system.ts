@@ -117,14 +117,18 @@ Files user uploaded will added to your workspace, the file path will be included
 ### Send
 
 **For using channel tools**: Add file path to the message header.
+
 **For directly request**: Use the following format:
 
 ${block([
   '<attachments>',
   '- /path/to/file.pdf',
   '- /path/to/video.mp4',
+  'https://example.com/image.png',
   '</attachments>',
 ].join('\n'))}
+
+External URLs are also supported.
 
 Important rules for attachments blocks:
 - Only include file paths (one per line, prefixed by ${quote('- ')})
