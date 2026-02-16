@@ -301,6 +301,14 @@ func (h *ContainerdHandler) ensureContainerAndTask(ctx context.Context, containe
 	}
 	if len(tasks) > 0 {
 		if tasks[0].Status == tasktypes.Status_RUNNING {
+			// Task is running but CNI state may be stale (e.g. server container restarted).
+			// Re-apply network to ensure connectivity.
+			if task, taskErr := h.service.GetTask(ctx, containerID); taskErr == nil {
+				if netErr := ctr.SetupNetwork(ctx, task, containerID); netErr != nil {
+					h.logger.Warn("network re-setup failed for running task",
+						slog.String("container_id", containerID), slog.Any("error", netErr))
+				}
+			}
 			return nil
 		}
 		if err := h.service.DeleteTask(ctx, containerID, &ctr.DeleteTaskOptions{Force: true}); err != nil {
@@ -927,6 +935,20 @@ func (h *ContainerdHandler) ReconcileContainers(ctx context.Context) {
 					h.logger.Error("reconcile: failed to update DB status to running",
 						slog.String("bot_id", botID), slog.Any("error", dbErr))
 				}
+			}
+			// Re-apply CNI networking: server container restart drops cni0 bridge,
+			// veth endpoints and iptables masquerade rules while the MCP task keeps
+			// running inside containerd.
+			if task, taskErr := h.service.GetTask(ctx, containerID); taskErr == nil {
+				if netErr := ctr.SetupNetwork(ctx, task, containerID); netErr != nil {
+					h.logger.Warn("reconcile: network re-setup failed for running task",
+						slog.String("bot_id", botID),
+						slog.String("container_id", containerID),
+						slog.Any("error", netErr))
+				}
+			} else {
+				h.logger.Warn("reconcile: failed to get task for network re-setup",
+					slog.String("bot_id", botID), slog.Any("error", taskErr))
 			}
 			h.logger.Info("reconcile: container healthy",
 				slog.String("bot_id", botID), slog.String("container_id", containerID))
