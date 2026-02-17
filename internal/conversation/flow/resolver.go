@@ -236,12 +236,11 @@ func (r *Resolver) resolve(ctx context.Context, req conversation.ChatRequest) (r
 		} else {
 			usableSkills = make([]gatewaySkill, 0, len(entries))
 			for _, e := range entries {
-				usableSkills = append(usableSkills, gatewaySkill{
-					Name:        e.Name,
-					Description: e.Description,
-					Content:     e.Content,
-					Metadata:    e.Metadata,
-				})
+				skill, ok := normalizeGatewaySkill(e)
+				if !ok {
+					continue
+				}
+				usableSkills = append(usableSkills, skill)
 			}
 		}
 	}
@@ -1097,6 +1096,27 @@ func sanitizeMessages(messages []conversation.ModelMessage) []conversation.Model
 		cleaned = append(cleaned, msg)
 	}
 	return cleaned
+}
+
+func normalizeGatewaySkill(entry SkillEntry) (gatewaySkill, bool) {
+	name := strings.TrimSpace(entry.Name)
+	if name == "" {
+		return gatewaySkill{}, false
+	}
+	description := strings.TrimSpace(entry.Description)
+	if description == "" {
+		description = name
+	}
+	content := strings.TrimSpace(entry.Content)
+	if content == "" {
+		content = description
+	}
+	return gatewaySkill{
+		Name:        name,
+		Description: description,
+		Content:     content,
+		Metadata:    entry.Metadata,
+	}, true
 }
 
 func dedup(items []string) []string {
