@@ -182,6 +182,81 @@ func TestPickTelegramPhoto(t *testing.T) {
 	}
 }
 
+func TestBuildTelegramMediaGroupInboundMessageAggregatesAttachments(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewTelegramAdapter(nil)
+	bot := &tgbotapi.BotAPI{
+		Token: "test",
+		Self:  tgbotapi.User{ID: 1001, UserName: "memohbot"},
+	}
+	cfg := channel.ChannelConfig{BotID: "bot-1"}
+	first := &tgbotapi.Message{
+		MessageID:    101,
+		MediaGroupID: "group-1",
+		Date:         1710000000,
+		Chat:         &tgbotapi.Chat{ID: -10001, Type: "group", Title: "G1"},
+		From:         &tgbotapi.User{ID: 10, UserName: "alice"},
+		Photo: []tgbotapi.PhotoSize{
+			{FileID: "photo-1", Width: 320, Height: 240, FileSize: 10},
+		},
+	}
+	second := &tgbotapi.Message{
+		MessageID:    102,
+		MediaGroupID: "group-1",
+		Date:         1710000001,
+		Chat:         &tgbotapi.Chat{ID: -10001, Type: "group", Title: "G1"},
+		From:         &tgbotapi.User{ID: 10, UserName: "alice"},
+		Caption:      "album caption",
+		Photo: []tgbotapi.PhotoSize{
+			{FileID: "photo-2", Width: 640, Height: 480, FileSize: 20},
+		},
+	}
+
+	inbound, ok := adapter.buildTelegramMediaGroupInboundMessage(bot, cfg, []*tgbotapi.Message{first, second})
+	if !ok {
+		t.Fatal("expected grouped inbound message")
+	}
+	if inbound.Message.Text != "album caption" {
+		t.Fatalf("unexpected grouped text: %q", inbound.Message.Text)
+	}
+	if len(inbound.Message.Attachments) != 2 {
+		t.Fatalf("expected 2 attachments, got %d", len(inbound.Message.Attachments))
+	}
+	if inbound.Message.Attachments[0].PlatformKey != "photo-1" || inbound.Message.Attachments[1].PlatformKey != "photo-2" {
+		t.Fatalf("unexpected attachment order: %#v", inbound.Message.Attachments)
+	}
+	if inbound.Message.ID != "102" {
+		t.Fatalf("expected anchor message id 102, got %s", inbound.Message.ID)
+	}
+	if inbound.ReplyTarget != "-10001" {
+		t.Fatalf("unexpected reply target: %q", inbound.ReplyTarget)
+	}
+	if got := inbound.Metadata["media_group_id"]; got != "group-1" {
+		t.Fatalf("unexpected media_group_id metadata: %#v", got)
+	}
+	if got := inbound.Metadata["media_group_size"]; got != 2 {
+		t.Fatalf("unexpected media_group_size metadata: %#v", got)
+	}
+}
+
+func TestIsTelegramMediaGroupForChat(t *testing.T) {
+	t.Parallel()
+
+	if isTelegramMediaGroupForChat("12:group-a", 12) == false {
+		t.Fatal("expected same chat key to match")
+	}
+	if isTelegramMediaGroupForChat("123:group-a", 12) {
+		t.Fatal("expected different chat key to not match")
+	}
+	if isTelegramMediaGroupForChat("", 12) {
+		t.Fatal("expected empty key to not match")
+	}
+	if isTelegramMediaGroupForChat("12:group-a", 0) {
+		t.Fatal("expected zero chat id to not match")
+	}
+}
+
 func TestTelegramAdapter_Type(t *testing.T) {
 	t.Parallel()
 

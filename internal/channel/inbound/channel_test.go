@@ -369,6 +369,73 @@ func TestChannelInboundProcessorIgnoreEmpty(t *testing.T) {
 	}
 }
 
+func TestBuildInboundQueryAttachmentFallback(t *testing.T) {
+	t.Parallel()
+
+	one := channel.Message{
+		Attachments: []channel.Attachment{
+			{Type: channel.AttachmentImage},
+		},
+	}
+	if got := buildInboundQuery(one); got != "[User sent 1 attachment]" {
+		t.Fatalf("unexpected single attachment fallback: %q", got)
+	}
+
+	two := channel.Message{
+		Attachments: []channel.Attachment{
+			{Type: channel.AttachmentImage},
+			{Type: channel.AttachmentImage},
+		},
+	}
+	if got := buildInboundQuery(two); got != "[User sent 2 attachments]" {
+		t.Fatalf("unexpected multiple attachment fallback: %q", got)
+	}
+}
+
+func TestChannelInboundProcessorAttachmentOnlyUsesFallbackQuery(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-fallback"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-fallback", RouteID: "route-fallback"}}
+	gateway := &fakeChatGateway{
+		resp: conversation.ChatResponse{
+			Messages: []conversation.ModelMessage{
+				{Role: "assistant", Content: conversation.NewTextContent("AI reply")},
+			},
+		},
+	}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	sender := &fakeReplySender{}
+
+	cfg := channel.ChannelConfig{ID: "cfg-1", BotID: "bot-1", ChannelType: channel.ChannelType("telegram")}
+	msg := channel.InboundMessage{
+		BotID:   "bot-1",
+		Channel: channel.ChannelType("telegram"),
+		Message: channel.Message{
+			Attachments: []channel.Attachment{
+				{Type: channel.AttachmentImage, URL: "https://example.com/a.png"},
+				{Type: channel.AttachmentImage, URL: "https://example.com/b.png"},
+			},
+		},
+		ReplyTarget: "chat-123",
+		Sender:      channel.Identity{SubjectID: "ext-1"},
+		Conversation: channel.Conversation{
+			ID:   "conv-1",
+			Type: "p2p",
+		},
+	}
+
+	err := processor.HandleInbound(context.Background(), cfg, msg, sender)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gateway.gotReq.Query != "[User sent 2 attachments]" {
+		t.Fatalf("unexpected fallback query: %q", gateway.gotReq.Query)
+	}
+	if len(gateway.gotReq.Attachments) != 2 {
+		t.Fatalf("expected attachments to pass through, got %d", len(gateway.gotReq.Attachments))
+	}
+}
+
 func TestChannelInboundProcessorSilentReply(t *testing.T) {
 	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-4"}}
 	memberSvc := &fakeMemberService{isMember: true}

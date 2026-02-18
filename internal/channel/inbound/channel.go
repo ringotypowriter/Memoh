@@ -858,7 +858,18 @@ func mapStreamChunkToChannelEvents(chunk conversation.StreamChunk) ([]channel.St
 }
 
 func buildInboundQuery(message channel.Message) string {
-	return strings.TrimSpace(message.PlainText())
+	text := strings.TrimSpace(message.PlainText())
+	if text != "" {
+		return text
+	}
+	if len(message.Attachments) == 0 {
+		return ""
+	}
+	count := len(message.Attachments)
+	if count == 1 {
+		return "[User sent 1 attachment]"
+	}
+	return fmt.Sprintf("[User sent %d attachments]", count)
 }
 
 func normalizeContentPartType(raw string) channel.MessagePartType {
