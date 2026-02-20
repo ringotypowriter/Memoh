@@ -14,7 +14,7 @@ func TestPruneMessagesForGateway_PrunesToolResultContent(t *testing.T) {
 	t.Parallel()
 
 	unit := "汉😀"
-	huge := strings.Repeat(unit, (gatewayToolResultMaxChars/len(unit))+20)
+	huge := strings.Repeat(unit, (gatewayToolPayloadMaxBytes/len(unit))+20)
 	msgs := []conversation.ModelMessage{
 		{Role: "tool", Content: conversation.NewTextContent(huge), ToolCallID: "call-1"},
 	}
@@ -37,7 +37,7 @@ func TestPruneMessagesForGateway_PrunesToolResultContent(t *testing.T) {
 func TestPruneMessagesForGateway_PrunesToolCallArguments(t *testing.T) {
 	t.Parallel()
 
-	repeated := strings.Repeat("猫😺", (gatewayToolArgsMaxChars/len("猫😺"))+20)
+	repeated := strings.Repeat("猫😺", (gatewayToolPayloadMaxBytes/len("猫😺"))+20)
 	hugeArgs := `{"a":"` + repeated + `"}`
 	msgs := []conversation.ModelMessage{
 		{
@@ -76,7 +76,7 @@ func TestPruneMessagesForGateway_PrunesToolCallArguments(t *testing.T) {
 func TestPruneHistoryForGateway_ClearsStaleUsageTokensAfterPrune(t *testing.T) {
 	t.Parallel()
 
-	huge := strings.Repeat("汉😀", (gatewayToolResultMaxChars/len("汉😀"))+20)
+	huge := strings.Repeat("汉😀", (gatewayToolPayloadMaxBytes/len("汉😀"))+20)
 	firstTokens := 123
 	secondTokens := 456
 
@@ -125,14 +125,22 @@ func TestPruneHistoryForGateway_PreservesUsageTokensWhenUnchanged(t *testing.T) 
 func TestPruneMessagesForGateway_ToolResultPartsRemainValidToolMessageSchema(t *testing.T) {
 	t.Parallel()
 
-	huge := strings.Repeat("a", gatewayToolResultMaxChars+100)
+	huge := strings.Repeat("a", gatewayToolPayloadMaxBytes+100)
 	part := map[string]any{
 		"type":       "tool-result",
 		"toolCallId": "call-1",
 		"toolName":   "big_tool",
+		"providerOptions": map[string]any{
+			"test-provider": map[string]any{"mode": "strict"},
+		},
+		"extraPart": "keep-part",
 		"output": map[string]any{
 			"type":  "text",
 			"value": huge,
+			"providerOptions": map[string]any{
+				"test-provider": map[string]any{"cache": true},
+			},
+			"extraOutput": "keep-output",
 		},
 	}
 	content, err := json.Marshal([]any{part})
@@ -164,9 +172,21 @@ func TestPruneMessagesForGateway_ToolResultPartsRemainValidToolMessageSchema(t *
 	if len(parts) != 1 {
 		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
+	if parts[0]["extraPart"] != "keep-part" {
+		t.Fatalf("expected extra part field preserved")
+	}
+	if _, ok := parts[0]["providerOptions"]; !ok {
+		t.Fatalf("expected part providerOptions preserved")
+	}
 	outputAny, ok := parts[0]["output"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected output object")
+	}
+	if outputAny["extraOutput"] != "keep-output" {
+		t.Fatalf("expected output extra field preserved")
+	}
+	if _, ok := outputAny["providerOptions"]; !ok {
+		t.Fatalf("expected output providerOptions preserved")
 	}
 	if outputAny["type"] != "text" {
 		t.Fatalf("expected output.type=text, got %v", outputAny["type"])

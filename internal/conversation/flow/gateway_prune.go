@@ -2,25 +2,29 @@ package flow
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/memohai/memoh/internal/conversation"
+	textprune "github.com/memohai/memoh/internal/prune"
 )
 
 const (
 	// Prune long tool payloads per message to keep gateway requests within provider limits,
 	// while preserving as much surrounding context as possible.
-	gatewayToolResultMaxChars  = 64 * 1024
-	gatewayToolResultHeadChars = 32 * 1024
-	gatewayToolResultTailChars = 8 * 1024
+	gatewayToolPayloadMaxBytes = textprune.DefaultMaxBytes
+	gatewayToolPayloadMaxLines = textprune.DefaultMaxLines
 
-	gatewayToolArgsMaxChars  = 16 * 1024
-	gatewayToolArgsHeadChars = 8 * 1024
-	gatewayToolArgsTailChars = 2 * 1024
+	gatewayToolResultHeadBytes = 6 * 1024
+	gatewayToolResultTailBytes = 2 * 1024
+	gatewayToolResultHeadLines = 180
+	gatewayToolResultTailLines = 50
 
-	gatewayToolPayloadPrunedMarker = "[memoh pruned]"
+	gatewayToolArgsHeadBytes = 4 * 1024
+	gatewayToolArgsTailBytes = 2 * 1024
+	gatewayToolArgsHeadLines = 180
+	gatewayToolArgsTailLines = 50
+
+	gatewayToolPayloadPrunedMarker = textprune.DefaultMarker
 )
 
 func pruneHistoryForGateway(messages []messageWithUsage) []messageWithUsage {
@@ -80,13 +84,15 @@ func pruneToolCalls(calls []conversation.ToolCall) ([]conversation.ToolCall, boo
 	for i, call := range calls {
 		out[i] = call
 		args := call.Function.Arguments
-		if args == "" || len(args) <= gatewayToolArgsMaxChars {
+		if args == "" || !exceedsTextBudget(args) {
 			continue
 		}
 		out[i].Function.Arguments = pruneStringEdges(
 			args,
-			gatewayToolArgsHeadChars,
-			gatewayToolArgsTailChars,
+			gatewayToolArgsHeadBytes,
+			gatewayToolArgsTailBytes,
+			gatewayToolArgsHeadLines,
+			gatewayToolArgsTailLines,
 			"tool arguments",
 		)
 		changed = true
@@ -104,28 +110,18 @@ func pruneToolMessage(msg conversation.ModelMessage) (conversation.ModelMessage,
 
 	// Backward-compat: tool messages may have been persisted as plain strings.
 	text := msg.TextContent()
-	if len(text) <= gatewayToolResultMaxChars {
+	if !exceedsTextBudget(text) {
 		return msg, false
 	}
 	msg.Content = conversation.NewTextContent(pruneStringEdges(
 		text,
-		gatewayToolResultHeadChars,
-		gatewayToolResultTailChars,
+		gatewayToolResultHeadBytes,
+		gatewayToolResultTailBytes,
+		gatewayToolResultHeadLines,
+		gatewayToolResultTailLines,
 		"tool result",
 	))
 	return msg, true
-}
-
-type toolResultPart struct {
-	Type       string     `json:"type"`
-	ToolCallID string     `json:"toolCallId"`
-	ToolName   string     `json:"toolName"`
-	Output     toolOutput `json:"output"`
-}
-
-type toolOutput struct {
-	Type  string          `json:"type"`
-	Value json.RawMessage `json:"value,omitempty"`
 }
 
 func pruneToolResultParts(content json.RawMessage) (json.RawMessage, bool) {
@@ -140,19 +136,35 @@ func pruneToolResultParts(content json.RawMessage) (json.RawMessage, bool) {
 	changed := false
 	out := make([]json.RawMessage, 0, len(parts))
 	for _, raw := range parts {
-		var part toolResultPart
-		if err := json.Unmarshal(raw, &part); err != nil || part.Type != "tool-result" {
+		var part map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &part); err != nil {
 			out = append(out, raw)
 			continue
 		}
 
-		pruned, didPrune := pruneToolOutput(part.Output)
+		partTypeRaw, ok := part["type"]
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+		var partType string
+		if err := json.Unmarshal(partTypeRaw, &partType); err != nil || partType != "tool-result" {
+			out = append(out, raw)
+			continue
+		}
+
+		outputRaw, ok := part["output"]
+		if !ok {
+			out = append(out, raw)
+			continue
+		}
+		pruned, didPrune := pruneToolOutput(outputRaw)
 		if !didPrune {
 			out = append(out, raw)
 			continue
 		}
 
-		part.Output = pruned
+		part["output"] = pruned
 		rebuilt, err := json.Marshal(part)
 		if err != nil {
 			out = append(out, raw)
@@ -172,44 +184,81 @@ func pruneToolResultParts(content json.RawMessage) (json.RawMessage, bool) {
 	return json.RawMessage(rebuilt), true
 }
 
-func pruneToolOutput(output toolOutput) (toolOutput, bool) {
-	switch output.Type {
+func pruneToolOutput(raw json.RawMessage) (json.RawMessage, bool) {
+	var output map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &output); err != nil {
+		return nil, false
+	}
+	outputTypeRaw, ok := output["type"]
+	if !ok {
+		return nil, false
+	}
+	var outputType string
+	if err := json.Unmarshal(outputTypeRaw, &outputType); err != nil {
+		return nil, false
+	}
+	valueRaw, hasValue := output["value"]
+
+	switch outputType {
 	case "text", "error-text":
-		var s string
-		if err := json.Unmarshal(output.Value, &s); err != nil || len(s) <= gatewayToolResultMaxChars {
-			return output, false
+		if !hasValue {
+			return nil, false
 		}
-		s = pruneStringEdges(s, gatewayToolResultHeadChars, gatewayToolResultTailChars, "tool result")
+		var s string
+		if err := json.Unmarshal(valueRaw, &s); err != nil || !exceedsTextBudget(s) {
+			return nil, false
+		}
+		s = pruneStringEdges(
+			s,
+			gatewayToolResultHeadBytes,
+			gatewayToolResultTailBytes,
+			gatewayToolResultHeadLines,
+			gatewayToolResultTailLines,
+			"tool result",
+		)
 		data, err := json.Marshal(s)
 		if err != nil {
-			return output, false
+			return nil, false
 		}
-		output.Value = data
-		return output, true
+		output["value"] = data
+		rebuilt, err := json.Marshal(output)
+		if err != nil {
+			return nil, false
+		}
+		return json.RawMessage(rebuilt), true
 
 	case "json", "error-json":
-		if len(output.Value) <= gatewayToolResultMaxChars {
-			return output, false
+		if !hasValue || !exceedsTextBudget(string(valueRaw)) {
+			return nil, false
 		}
 		pruned := pruneStringEdges(
-			string(output.Value),
-			gatewayToolResultHeadChars,
-			gatewayToolResultTailChars,
+			string(valueRaw),
+			gatewayToolResultHeadBytes,
+			gatewayToolResultTailBytes,
+			gatewayToolResultHeadLines,
+			gatewayToolResultTailLines,
 			"tool result (json)",
 		)
 		data, err := json.Marshal(pruned)
 		if err != nil {
-			return output, false
+			return nil, false
 		}
-		output.Value = data
-		return output, true
+		output["value"] = data
+		rebuilt, err := json.Marshal(output)
+		if err != nil {
+			return nil, false
+		}
+		return json.RawMessage(rebuilt), true
 
 	case "content":
 		// Best-effort: prune any large text items inside the content array.
 		// If parsing fails, keep the original output to avoid breaking schema.
+		if !hasValue {
+			return nil, false
+		}
 		var items []map[string]any
-		if err := json.Unmarshal(output.Value, &items); err != nil {
-			return output, false
+		if err := json.Unmarshal(valueRaw, &items); err != nil {
+			return nil, false
 		}
 		didPrune := false
 		for i := range items {
@@ -221,95 +270,50 @@ func pruneToolOutput(output toolOutput) (toolOutput, bool) {
 				continue
 			}
 			text, ok := textAny.(string)
-			if !ok || len(text) <= gatewayToolResultMaxChars {
+			if !ok || !exceedsTextBudget(text) {
 				continue
 			}
-			items[i]["text"] = pruneStringEdges(text, gatewayToolResultHeadChars, gatewayToolResultTailChars, "tool result (content)")
+			items[i]["text"] = pruneStringEdges(
+				text,
+				gatewayToolResultHeadBytes,
+				gatewayToolResultTailBytes,
+				gatewayToolResultHeadLines,
+				gatewayToolResultTailLines,
+				"tool result (content)",
+			)
 			didPrune = true
 		}
 		if !didPrune {
-			return output, false
+			return nil, false
 		}
 		data, err := json.Marshal(items)
 		if err != nil {
-			return output, false
+			return nil, false
 		}
-		output.Value = data
-		return output, true
+		output["value"] = data
+		rebuilt, err := json.Marshal(output)
+		if err != nil {
+			return nil, false
+		}
+		return json.RawMessage(rebuilt), true
 
 	default:
-		return output, false
+		return nil, false
 	}
 }
 
-func pruneStringEdges(s string, headChars, tailChars int, label string) string {
-	if headChars < 0 {
-		headChars = 0
-	}
-	if tailChars < 0 {
-		tailChars = 0
-	}
-	if headChars+tailChars <= 0 || len(s) == 0 {
-		return fmt.Sprintf("%s %s omitted (len=%d)", gatewayToolPayloadPrunedMarker, label, len(s))
-	}
-	if len(s) <= headChars+tailChars {
-		return s
-	}
-	head := safeUTF8Prefix(s, minInt(headChars, len(s)))
-	tail := ""
-	if tailChars > 0 {
-		tail = safeUTF8Suffix(s, minInt(tailChars, len(s)))
-	}
-	return fmt.Sprintf(
-		"%s %s too long (len=%d), showing head/tail\n\n%s\n\n[...snip...]\n\n%s",
-		gatewayToolPayloadPrunedMarker,
-		label,
-		len(s),
-		head,
-		tail,
-	)
+func pruneStringEdges(s string, headBytes, tailBytes, headLines, tailLines int, label string) string {
+	return textprune.PruneWithEdges(s, label, textprune.Config{
+		MaxBytes:  gatewayToolPayloadMaxBytes,
+		MaxLines:  gatewayToolPayloadMaxLines,
+		HeadBytes: headBytes,
+		TailBytes: tailBytes,
+		HeadLines: headLines,
+		TailLines: tailLines,
+		Marker:    gatewayToolPayloadPrunedMarker,
+	})
 }
 
-func safeUTF8Prefix(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) == 0 {
-		return ""
-	}
-	if maxBytes >= len(s) {
-		return s
-	}
-	cut := maxBytes
-	for cut > 0 && cut < len(s) && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	if cut <= 0 {
-		return ""
-	}
-	return s[:cut]
-}
-
-func safeUTF8Suffix(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) == 0 {
-		return ""
-	}
-	if maxBytes >= len(s) {
-		return s
-	}
-	start := len(s) - maxBytes
-	if start < 0 {
-		start = 0
-	}
-	for start < len(s) && !utf8.RuneStart(s[start]) {
-		start++
-	}
-	if start >= len(s) {
-		return ""
-	}
-	return s[start:]
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+func exceedsTextBudget(s string) bool {
+	return textprune.Exceeds(s, gatewayToolPayloadMaxBytes, gatewayToolPayloadMaxLines)
 }
