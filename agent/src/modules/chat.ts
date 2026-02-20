@@ -1,4 +1,4 @@
-import { Elysia, sse } from 'elysia'
+import { Elysia } from 'elysia'
 import z from 'zod'
 import { createAgent } from '../agent'
 import { createAuthFetcher, getBaseUrl } from '../index'
@@ -6,6 +6,7 @@ import { ModelConfig } from '../types'
 import { bearerMiddleware } from '../middlewares/bearer'
 import { AgentSkillModel, AllowedActionModel, AttachmentModel, IdentityContextModel, MCPConnectionModel, ModelConfigModel, ScheduleModel } from '../models'
 import { allActions } from '../types'
+import { sseChunked } from '../utils/sse'
 
 const AgentModel = z.object({
   model: ModelConfigModel,
@@ -75,14 +76,14 @@ export const chatModule = new Elysia({ prefix: '/chat' })
         skills: body.skills,
         attachments: body.attachments,
       })) {
-        yield sse(JSON.stringify(action))
+        yield sseChunked(JSON.stringify(action))
       }
     } catch (error) {
       console.error(error)
       const message = error instanceof Error && error.message.trim()
         ? error.message
         : 'Internal server error'
-      yield sse(JSON.stringify({
+      yield sseChunked(JSON.stringify({
         type: 'error',
         message,
       }))

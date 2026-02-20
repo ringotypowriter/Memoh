@@ -196,7 +196,7 @@ func TestPrepareGatewayAttachments_InlineAssetToBase64(t *testing.T) {
 		BotID: "bot-1",
 		Attachments: []conversation.ChatAttachment{
 			{
-				Type:    "image",
+				Type:        "image",
 				ContentHash: "asset-1",
 			},
 		},
@@ -241,6 +241,107 @@ func TestPrepareGatewayAttachments_DataURLFromURLFieldIsNativeInline(t *testing.
 	if prepared[0].FallbackPath != "" {
 		t.Fatalf("expected empty fallback path, got %q", prepared[0].FallbackPath)
 	}
+}
+
+func TestStreamChat_AllowsLargeSSEDataLines(t *testing.T) {
+	const overOldScannerLimit = 3 * 1024 * 1024
+	hugeDelta := strings.Repeat("a", overOldScannerLimit)
+	dataJSON, err := json.Marshal(map[string]any{
+		"type":  "text_delta",
+		"delta": hugeDelta,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal test payload: %v", err)
+	}
+	dataStr := string(dataJSON)
+	parts := make([]string, 0, (len(dataStr)/8192)+1)
+	for i := 0; i < len(dataStr); i += 8192 {
+		end := i + 8192
+		if end > len(dataStr) {
+			end = len(dataStr)
+		}
+		parts = append(parts, dataStr[i:end])
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/stream" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: message\n")
+		for _, part := range parts {
+			_, _ = io.WriteString(w, "data:")
+			_, _ = io.WriteString(w, part)
+			_, _ = io.WriteString(w, "\n")
+		}
+		_, _ = io.WriteString(w, "\n")
+	}))
+	defer srv.Close()
+
+	resolver := &Resolver{
+		gatewayBaseURL:  srv.URL,
+		streamingClient: srv.Client(),
+		logger:          slog.Default(),
+	}
+
+	chunkCh := make(chan conversation.StreamChunk, 1)
+	err = resolver.streamChat(
+		context.Background(),
+		gatewayRequest{},
+		conversation.ChatRequest{},
+		chunkCh,
+	)
+	if err != nil {
+		t.Fatalf("streamChat returned error: %v", err)
+	}
+
+	select {
+	case chunk := <-chunkCh:
+		if !bytes.Equal(chunk, dataJSON) {
+			t.Fatalf("unexpected reconstructed payload: got prefix %q", string(chunk[:min(len(chunk), 80)]))
+		}
+	default:
+		t.Fatalf("expected at least one streamed chunk")
+	}
+}
+
+func TestStreamChat_RejectsOverLimitSSELine(t *testing.T) {
+	tooLong := strings.Repeat("x", gatewaySSEMaxLineBytes+10)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/stream" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: message\n")
+		_, _ = io.WriteString(w, "data:")
+		_, _ = io.WriteString(w, tooLong)
+		_, _ = io.WriteString(w, "\n\n")
+	}))
+	defer srv.Close()
+
+	resolver := &Resolver{
+		gatewayBaseURL:  srv.URL,
+		streamingClient: srv.Client(),
+		logger:          slog.Default(),
+	}
+
+	chunkCh := make(chan conversation.StreamChunk, 1)
+	err := resolver.streamChat(context.Background(), gatewayRequest{}, conversation.ChatRequest{}, chunkCh)
+	if err == nil {
+		t.Fatalf("expected streamChat to error on oversized SSE line")
+	}
+	if !strings.Contains(err.Error(), "sse line too long") {
+		t.Fatalf("expected line-too-long error, got: %v", err)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func TestPrepareGatewayAttachments_PublicURLFromURLFieldIsNativePublic(t *testing.T) {
@@ -321,7 +422,7 @@ func TestPrepareGatewayAttachments_DetectsImageMimeWhenOctetStream(t *testing.T)
 		BotID: "bot-1",
 		Attachments: []conversation.ChatAttachment{
 			{
-				Type:    "image",
+				Type:        "image",
 				ContentHash: "asset-2",
 			},
 		},
