@@ -85,7 +85,7 @@ It returns each route's platform, conversation type, and ${quote('target')} (the
 
 **Receiving**: Uploaded files are saved to your workspace; the file path appears in the message header.
 
-**Sending via channel tools**: Include the file path in the message.
+**Sending via ${quote('send')} tool**: Pass file paths or URLs in the ${quote('attachments')} parameter. Example: ${quote('attachments: ["/data/media/ab/file.jpg", "https://example.com/img.png"]')}
 
 **Sending in direct responses**: Use this format:
 
