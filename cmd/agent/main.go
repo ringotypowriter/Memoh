@@ -436,8 +436,12 @@ func provideContainerdHandler(log *slog.Logger, service ctr.Service, manager *mc
 	return handlers.NewContainerdHandler(log, service, manager, cfg.MCP, cfg.Containerd.Namespace, botService, accountService, policyService, queries)
 }
 
-func provideToolGatewayService(log *slog.Logger, cfg config.Config, channelManager *channel.Manager, registry *channel.Registry, routeService *route.DBService, scheduleService *schedule.Service, memoryService *memory.Service, chatService *conversation.Service, accountService *accounts.Service, settingsService *settings.Service, searchProviderService *searchproviders.Service, manager *mcp.Manager, containerdHandler *handlers.ContainerdHandler, mcpConnService *mcp.ConnectionService) *mcp.ToolGatewayService {
-	messageExec := mcpmessage.NewExecutor(log, channelManager, channelManager, registry)
+func provideToolGatewayService(log *slog.Logger, cfg config.Config, channelManager *channel.Manager, registry *channel.Registry, routeService *route.DBService, scheduleService *schedule.Service, memoryService *memory.Service, chatService *conversation.Service, accountService *accounts.Service, settingsService *settings.Service, searchProviderService *searchproviders.Service, manager *mcp.Manager, containerdHandler *handlers.ContainerdHandler, mcpConnService *mcp.ConnectionService, mediaService *media.Service) *mcp.ToolGatewayService {
+	var assetResolver mcpmessage.AssetResolver
+	if mediaService != nil {
+		assetResolver = &mediaAssetResolverAdapter{media: mediaService}
+	}
+	messageExec := mcpmessage.NewExecutor(log, channelManager, channelManager, registry, assetResolver)
 	contactsExec := mcpcontacts.NewExecutor(log, routeService)
 	scheduleExec := mcpschedule.NewExecutor(log, scheduleService)
 	memoryExec := mcpmemory.NewExecutor(log, memoryService, chatService, accountService)
@@ -772,6 +776,27 @@ func (a *skillLoaderAdapter) LoadSkills(ctx context.Context, botID string) ([]fl
 		}
 	}
 	return entries, nil
+}
+
+// mediaAssetResolverAdapter bridges media.Service to the message tool's AssetResolver interface.
+type mediaAssetResolverAdapter struct {
+	media *media.Service
+}
+
+func (a *mediaAssetResolverAdapter) GetByStorageKey(ctx context.Context, botID, storageKey string) (mcpmessage.AssetMeta, error) {
+	if a == nil || a.media == nil {
+		return mcpmessage.AssetMeta{}, fmt.Errorf("media service not configured")
+	}
+	asset, err := a.media.GetByStorageKey(ctx, botID, storageKey)
+	if err != nil {
+		return mcpmessage.AssetMeta{}, err
+	}
+	return mcpmessage.AssetMeta{
+		ContentHash: asset.ContentHash,
+		Mime:        asset.Mime,
+		SizeBytes:   asset.SizeBytes,
+		StorageKey:  asset.StorageKey,
+	}, nil
 }
 
 // gatewayAssetLoaderAdapter bridges media service to flow gateway asset loader.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/memohai/memoh/internal/channel"
@@ -31,25 +32,40 @@ type ChannelTypeResolver interface {
 	ParseChannelType(raw string) (channel.ChannelType, error)
 }
 
+// AssetMeta holds resolved metadata for a media asset.
+type AssetMeta struct {
+	ContentHash string
+	Mime        string
+	SizeBytes   int64
+	StorageKey  string
+}
+
+// AssetResolver looks up persisted media assets by storage key.
+type AssetResolver interface {
+	GetByStorageKey(ctx context.Context, botID, storageKey string) (AssetMeta, error)
+}
+
 // Executor exposes send and react as MCP tools.
 type Executor struct {
-	sender   Sender
-	reactor  Reactor
-	resolver ChannelTypeResolver
-	logger   *slog.Logger
+	sender        Sender
+	reactor       Reactor
+	resolver      ChannelTypeResolver
+	assetResolver AssetResolver
+	logger        *slog.Logger
 }
 
 // NewExecutor creates a message tool executor.
-// reactor may be nil; the react tool will not be listed when reactor is unavailable.
-func NewExecutor(log *slog.Logger, sender Sender, reactor Reactor, resolver ChannelTypeResolver) *Executor {
+// reactor and assetResolver may be nil.
+func NewExecutor(log *slog.Logger, sender Sender, reactor Reactor, resolver ChannelTypeResolver, assetResolver AssetResolver) *Executor {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Executor{
-		sender:   sender,
-		reactor:  reactor,
-		resolver: resolver,
-		logger:   log.With(slog.String("provider", "message_tool")),
+		sender:        sender,
+		reactor:       reactor,
+		resolver:      resolver,
+		assetResolver: assetResolver,
+		logger:        log.With(slog.String("provider", "message_tool")),
 	}
 }
 
@@ -58,7 +74,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 	if p.sender != nil && p.resolver != nil {
 		tools = append(tools, mcpgw.ToolDescriptor{
 			Name:        toolSend,
-			Description: "Send a message to a channel or session. Supports text, structured messages, attachments, and replies.",
+			Description: "Send a message to a channel or session. Supports text, attachments, and replies.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -81,6 +97,11 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 					"reply_to": map[string]any{
 						"type":        "string",
 						"description": "Message ID to reply to. The reply will reference this message on the platform.",
+					},
+					"attachments": map[string]any{
+						"type":        "array",
+						"description": "File paths or URLs to attach. Each item is a container path (e.g. /data/media/ab/file.jpg), an HTTP URL, or an object with {path, url, type, name}.",
+						"items": map[string]any{},
 					},
 					"message": map[string]any{
 						"type":        "object",
@@ -160,10 +181,25 @@ func (p *Executor) callSend(ctx context.Context, session mcpgw.ToolSessionContex
 	messageText := mcpgw.FirstStringArg(arguments, "text")
 	outboundMessage, parseErr := parseOutboundMessage(arguments, messageText)
 	if parseErr != nil {
-		return mcpgw.BuildToolErrorResult(parseErr.Error()), nil
+		// Allow empty message when attachments are provided.
+		if rawAtt, ok := arguments["attachments"]; !ok || rawAtt == nil {
+			return mcpgw.BuildToolErrorResult(parseErr.Error()), nil
+		}
+		outboundMessage = channel.Message{Text: strings.TrimSpace(messageText)}
 	}
 
-	// Attach reply reference if reply_to is provided.
+	// Resolve top-level attachments parameter.
+	if rawAttachments, ok := arguments["attachments"]; ok && rawAttachments != nil {
+		if arr, ok := rawAttachments.([]any); ok && len(arr) > 0 {
+			resolved := p.resolveAttachments(ctx, botID, arr)
+			outboundMessage.Attachments = append(outboundMessage.Attachments, resolved...)
+		}
+	}
+
+	if outboundMessage.IsEmpty() {
+		return mcpgw.BuildToolErrorResult("message or attachments required"), nil
+	}
+
 	if replyTo := mcpgw.FirstStringArg(arguments, "reply_to"); replyTo != "" {
 		outboundMessage.Reply = &channel.ReplyRef{MessageID: replyTo}
 	}
@@ -279,6 +315,140 @@ func (p *Executor) resolvePlatform(arguments map[string]any, session mcpgw.ToolS
 		return "", fmt.Errorf("platform is required")
 	}
 	return p.resolver.ParseChannelType(platform)
+}
+
+// --- attachment resolution ---
+
+// resolveAttachments converts raw attachment arguments (strings or objects)
+// into channel.Attachment values, resolving container media paths when possible.
+func (p *Executor) resolveAttachments(ctx context.Context, botID string, items []any) []channel.Attachment {
+	var result []channel.Attachment
+	for _, item := range items {
+		switch v := item.(type) {
+		case string:
+			if att := p.resolveAttachmentRef(ctx, botID, strings.TrimSpace(v), "", ""); att != nil {
+				result = append(result, *att)
+			}
+		case map[string]any:
+			path := mcpgw.FirstStringArg(v, "path")
+			url := mcpgw.FirstStringArg(v, "url")
+			attType := mcpgw.FirstStringArg(v, "type")
+			name := mcpgw.FirstStringArg(v, "name")
+			ref := path
+			if ref == "" {
+				ref = url
+			}
+			if ref == "" {
+				continue
+			}
+			if att := p.resolveAttachmentRef(ctx, botID, ref, attType, name); att != nil {
+				result = append(result, *att)
+			}
+		}
+	}
+	return result
+}
+
+// resolveAttachmentRef resolves a single path or URL to a channel.Attachment.
+func (p *Executor) resolveAttachmentRef(ctx context.Context, botID, ref, attType, name string) *channel.Attachment {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	lower := strings.ToLower(ref)
+
+	// HTTP/HTTPS URL — pass through.
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		t := channel.AttachmentType(attType)
+		if t == "" {
+			t = inferAttachmentTypeFromExt(ref)
+		}
+		return &channel.Attachment{
+			Type: t,
+			URL:  ref,
+			Name: name,
+		}
+	}
+
+	// Data URL — pass through.
+	if strings.HasPrefix(lower, "data:") {
+		t := channel.AttachmentType(attType)
+		if t == "" {
+			t = channel.AttachmentImage
+		}
+		return &channel.Attachment{
+			Type:   t,
+			Base64: ref,
+			Name:   name,
+		}
+	}
+
+	// Container media path — resolve via asset storage.
+	const mediaMarker = "/data/media/"
+	if idx := strings.Index(ref, mediaMarker); idx >= 0 && p.assetResolver != nil {
+		storageKey := ref[idx+len(mediaMarker):]
+		asset, err := p.assetResolver.GetByStorageKey(ctx, botID, storageKey)
+		if err == nil {
+			t := channel.AttachmentType(attType)
+			if t == "" {
+				t = inferAttachmentTypeFromMime(asset.Mime)
+			}
+			att := channel.Attachment{
+				Type:        t,
+				ContentHash: asset.ContentHash,
+				Mime:        asset.Mime,
+				Size:        asset.SizeBytes,
+				Name:        name,
+				Metadata: map[string]any{
+					"bot_id":      botID,
+					"storage_key": asset.StorageKey,
+				},
+			}
+			return &att
+		}
+		if p.logger != nil {
+			p.logger.Warn("resolve media path failed", slog.String("path", ref), slog.Any("error", err))
+		}
+	}
+
+	// Unknown container path — pass through with the path as URL.
+	t := channel.AttachmentType(attType)
+	if t == "" {
+		t = inferAttachmentTypeFromExt(ref)
+	}
+	return &channel.Attachment{
+		Type: t,
+		URL:  ref,
+		Name: name,
+	}
+}
+
+func inferAttachmentTypeFromMime(mime string) channel.AttachmentType {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		return channel.AttachmentImage
+	case strings.HasPrefix(mime, "audio/"):
+		return channel.AttachmentAudio
+	case strings.HasPrefix(mime, "video/"):
+		return channel.AttachmentVideo
+	default:
+		return channel.AttachmentFile
+	}
+}
+
+func inferAttachmentTypeFromExt(path string) channel.AttachmentType {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg":
+		return channel.AttachmentImage
+	case ".mp3", ".wav", ".ogg", ".flac", ".aac":
+		return channel.AttachmentAudio
+	case ".mp4", ".webm", ".avi", ".mov":
+		return channel.AttachmentVideo
+	default:
+		return channel.AttachmentFile
+	}
 }
 
 func parseOutboundMessage(arguments map[string]any, fallbackText string) (channel.Message, error) {
