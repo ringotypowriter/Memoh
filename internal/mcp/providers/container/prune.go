@@ -3,9 +3,9 @@ package container
 import textprune "github.com/memohai/memoh/internal/prune"
 
 const (
-	toolOutputHeadBytes = 6 * 1024
-	toolOutputTailBytes = 2 * 1024
-	toolOutputHeadLines = 180
+	toolOutputHeadBytes = 4 * 1024
+	toolOutputTailBytes = 1 * 1024
+	toolOutputHeadLines = 150
 	toolOutputTailLines = 50
 )
 
