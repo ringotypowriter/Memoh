@@ -70,11 +70,20 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		}
 		return s.patchCard(ctx, s.textBuffer.String())
 	case channel.StreamEventToolCallStart:
-		if err := s.ensureCard(ctx, feishuStreamToolHintText); err != nil {
-			return err
+		bufText := strings.TrimSpace(s.textBuffer.String())
+		if s.cardMessageID != "" && bufText != "" {
+			_ = s.patchCard(ctx, bufText)
 		}
-		return s.patchCard(ctx, feishuStreamToolHintText)
+		s.cardMessageID = ""
+		s.lastPatched = ""
+		s.lastPatchedAt = time.Time{}
+		s.textBuffer.Reset()
+		return nil
 	case channel.StreamEventToolCallEnd:
+		s.cardMessageID = ""
+		s.lastPatched = ""
+		s.lastPatchedAt = time.Time{}
+		s.textBuffer.Reset()
 		return nil
 	case channel.StreamEventAttachment:
 		if len(event.Attachments) == 0 {
@@ -94,9 +103,10 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 			return nil
 		}
 		msg := event.Final.Message
-		finalText := strings.TrimSpace(msg.PlainText())
+		bufText := strings.TrimSpace(s.textBuffer.String())
+		finalText := bufText
 		if finalText == "" {
-			finalText = strings.TrimSpace(s.textBuffer.String())
+			finalText = strings.TrimSpace(msg.PlainText())
 		}
 		if finalText != "" {
 			if err := s.ensureCard(ctx, feishuStreamThinkingText); err != nil {
