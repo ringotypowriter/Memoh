@@ -143,7 +143,7 @@ Rules:
 
 You can create and manage schedule tasks via cron.
 Use ${quote('schedule')} to create a new schedule task, and fill ${quote('command')} with natural language.
-When cron pattern is valid, you will receive a schedule mesasage with your ${quote('command')}.
+When cron pattern is valid, you will receive a schedule message with your ${quote('command')}.
 
 Using ${quote('send')} to respond is a better way than responding directly.
 
