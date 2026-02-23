@@ -127,7 +127,7 @@ func (a *FeishuAdapter) Descriptor() channel.Descriptor {
 			BlockStreaming: true,
 		},
 		ConfigSchema: channel.ConfigSchema{
-			Version: 1,
+			Version: 2,
 			Fields: map[string]channel.FieldSchema{
 				"appId":     {Type: channel.FieldString, Required: true, Title: "App ID"},
 				"appSecret": {Type: channel.FieldSecret, Required: true, Title: "App Secret"},
@@ -138,6 +138,20 @@ func (a *FeishuAdapter) Descriptor() channel.Descriptor {
 				"verificationToken": {
 					Type:  channel.FieldSecret,
 					Title: "Verification Token",
+				},
+				"region": {
+					Type:        channel.FieldEnum,
+					Title:       "Region",
+					Description: "API endpoint region: feishu.cn or larksuite.com",
+					Enum:        []string{regionFeishu, regionLark},
+					Example:     regionFeishu,
+				},
+				"inboundMode": {
+					Type:        channel.FieldEnum,
+					Title:       "Inbound Mode",
+					Description: "Choose websocket long-connection or webhook callback for inbound messages",
+					Enum:        []string{inboundModeWebsocket, inboundModeWebhook},
+					Example:     inboundModeWebsocket,
 				},
 			},
 		},
@@ -200,7 +214,7 @@ func (a *FeishuAdapter) processingReactionGateway(cfg channel.ChannelConfig) (pr
 	if err != nil {
 		return nil, err
 	}
-	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret)
+	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret, lark.WithOpenBaseUrl(feishuCfg.openBaseURL()))
 	gateway := &larkProcessingReactionGateway{api: client.Im.V1.MessageReaction}
 	return gateway, nil
 }
@@ -264,7 +278,7 @@ func (a *FeishuAdapter) DiscoverSelf(ctx context.Context, credentials map[string
 	if err != nil {
 		return nil, "", err
 	}
-	client := lark.NewClient(cfg.AppID, cfg.AppSecret)
+	client := lark.NewClient(cfg.AppID, cfg.AppSecret, lark.WithOpenBaseUrl(cfg.openBaseURL()))
 	resp, err := client.Get(ctx, "/open-apis/bot/v3/info", nil, larkcore.AccessTokenTypeTenant)
 	if err != nil {
 		return nil, "", fmt.Errorf("feishu discover self: %w", err)
@@ -341,6 +355,12 @@ func (a *FeishuAdapter) Connect(ctx context.Context, cfg channel.ChannelConfig, 
 			a.logger.Error("decode config failed", slog.String("config_id", cfg.ID), slog.Any("error", err))
 		}
 		return nil, err
+	}
+	if feishuCfg.InboundMode == inboundModeWebhook {
+		if a.logger != nil {
+			a.logger.Info("webhook mode enabled; websocket connect skipped", slog.String("config_id", cfg.ID))
+		}
+		return channel.NewConnection(cfg, func(context.Context) error { return nil }), nil
 	}
 	botOpenID := channel.ReadString(cfg.SelfIdentity, "open_id")
 	if botOpenID == "" {
@@ -444,6 +464,7 @@ func (a *FeishuAdapter) Connect(ctx context.Context, cfg channel.ChannelConfig, 
 			feishuCfg.AppID,
 			feishuCfg.AppSecret,
 			larkws.WithEventHandler(eventDispatcher),
+			larkws.WithDomain(feishuCfg.openBaseURL()),
 			larkws.WithLogger(newLarkSlogLogger(a.logger)),
 			larkws.WithLogLevel(larkcore.LogLevelDebug),
 		)
@@ -499,7 +520,7 @@ func (a *FeishuAdapter) Send(ctx context.Context, cfg channel.ChannelConfig, msg
 		return err
 	}
 
-	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret)
+	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret, lark.WithOpenBaseUrl(feishuCfg.openBaseURL()))
 
 	if len(msg.Message.Attachments) > 0 {
 		for _, att := range msg.Message.Attachments {
@@ -576,7 +597,7 @@ func (a *FeishuAdapter) OpenStream(ctx context.Context, cfg channel.ChannelConfi
 	if err != nil {
 		return nil, err
 	}
-	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret)
+	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret, lark.WithOpenBaseUrl(feishuCfg.openBaseURL()))
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -768,7 +789,7 @@ func (a *FeishuAdapter) ResolveAttachment(ctx context.Context, cfg channel.Chann
 	if err != nil {
 		return channel.AttachmentPayload{}, err
 	}
-	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret)
+	client := lark.NewClient(feishuCfg.AppID, feishuCfg.AppSecret, lark.WithOpenBaseUrl(feishuCfg.openBaseURL()))
 
 	resourceType := "file"
 	if isFeishuImageAttachment(attachment) {

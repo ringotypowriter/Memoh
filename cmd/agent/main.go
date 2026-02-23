@@ -41,13 +41,13 @@ import (
 	"github.com/memohai/memoh/internal/embeddings"
 	"github.com/memohai/memoh/internal/handlers"
 	"github.com/memohai/memoh/internal/healthcheck"
-	"github.com/memohai/memoh/internal/inbox"
 	channelchecker "github.com/memohai/memoh/internal/healthcheck/checkers/channel"
 	mcpchecker "github.com/memohai/memoh/internal/healthcheck/checkers/mcp"
+	"github.com/memohai/memoh/internal/inbox"
 	"github.com/memohai/memoh/internal/logger"
 	"github.com/memohai/memoh/internal/mcp"
-	mcpcontainer "github.com/memohai/memoh/internal/mcp/providers/container"
 	mcpcontacts "github.com/memohai/memoh/internal/mcp/providers/contacts"
+	mcpcontainer "github.com/memohai/memoh/internal/mcp/providers/container"
 	mcpinbox "github.com/memohai/memoh/internal/mcp/providers/inbox"
 	mcpmemory "github.com/memohai/memoh/internal/mcp/providers/memory"
 	mcpmessage "github.com/memohai/memoh/internal/mcp/providers/message"
@@ -203,6 +203,7 @@ func runServe() {
 			provideServerHandler(handlers.NewScheduleHandler),
 			provideServerHandler(handlers.NewSubagentHandler),
 			provideServerHandler(handlers.NewChannelHandler),
+			provideServerHandler(feishu.NewWebhookServerHandler),
 			provideServerHandler(provideUsersHandler),
 			provideServerHandler(handlers.NewMCPHandler),
 			provideServerHandler(handlers.NewInboxHandler),
@@ -395,7 +396,7 @@ func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService 
 	tgAdapter := telegram.NewTelegramAdapter(log)
 	tgAdapter.SetAssetOpener(mediaService)
 	registry.MustRegister(tgAdapter)
-    registry.MustRegister(discord.NewDiscordAdapter(log))
+	registry.MustRegister(discord.NewDiscordAdapter(log))
 	registry.MustRegister(feishu.NewFeishuAdapter(log))
 	registry.MustRegister(local.NewCLIAdapter(hub))
 	registry.MustRegister(local.NewWebAdapter(hub))

@@ -14,6 +14,12 @@ import (
 )
 
 const inboundDedupTTL = time.Minute
+const processingBusyReactionEmoji = "⏳"
+
+type processingStatusSession interface {
+	ChannelTyping(channelID string, options ...discordgo.RequestOption) error
+	MessageReactionAdd(channelID, messageID, emoji string, options ...discordgo.RequestOption) error
+}
 
 type DiscordAdapter struct {
 	logger          *slog.Logger
@@ -295,6 +301,7 @@ func (a *DiscordAdapter) ProcessingStarted(ctx context.Context, cfg channel.Chan
 	if chatID == "" {
 		return channel.ProcessingStatusHandle{}, nil
 	}
+	sourceMessageID := strings.TrimSpace(info.SourceMessageID)
 
 	discordCfg, err := parseConfig(cfg.Credentials)
 	if err != nil {
@@ -306,17 +313,58 @@ func (a *DiscordAdapter) ProcessingStarted(ctx context.Context, cfg channel.Chan
 		return channel.ProcessingStatusHandle{}, err
 	}
 
-	// Discord typing indicator
-	err = session.ChannelTyping(chatID)
-	return channel.ProcessingStatusHandle{}, err
+	return startProcessingStatus(session, chatID, sourceMessageID)
+}
+
+func startProcessingStatus(session processingStatusSession, chatID, sourceMessageID string) (channel.ProcessingStatusHandle, error) {
+	// Keep typing indicator for immediate feedback.
+	var firstErr error
+	if err := session.ChannelTyping(chatID); err != nil {
+		firstErr = err
+	}
+
+	handle := channel.ProcessingStatusHandle{}
+	if sourceMessageID != "" {
+		if err := session.MessageReactionAdd(chatID, sourceMessageID, processingBusyReactionEmoji); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			handle.Token = processingBusyReactionEmoji
+		}
+	}
+
+	// If busy reaction was added successfully, keep the handle usable for cleanup even
+	// when typing fails.
+	if handle.Token != "" {
+		return handle, nil
+	}
+	return handle, firstErr
 }
 
 func (a *DiscordAdapter) ProcessingCompleted(ctx context.Context, cfg channel.ChannelConfig, msg channel.InboundMessage, info channel.ProcessingStatusInfo, handle channel.ProcessingStatusHandle) error {
-	return nil
+	emoji := strings.TrimSpace(handle.Token)
+	if emoji == "" {
+		return nil
+	}
+	chatID := strings.TrimSpace(info.ReplyTarget)
+	messageID := strings.TrimSpace(info.SourceMessageID)
+	if chatID == "" || messageID == "" {
+		return nil
+	}
+	discordCfg, err := parseConfig(cfg.Credentials)
+	if err != nil {
+		return err
+	}
+	session, err := a.getOrCreateSession(discordCfg.BotToken, cfg.ID)
+	if err != nil {
+		return err
+	}
+	return session.MessageReactionRemove(chatID, messageID, emoji, "@me")
 }
 
 func (a *DiscordAdapter) ProcessingFailed(ctx context.Context, cfg channel.ChannelConfig, msg channel.InboundMessage, info channel.ProcessingStatusInfo, handle channel.ProcessingStatusHandle, cause error) error {
-	return nil
+	return a.ProcessingCompleted(ctx, cfg, msg, info, handle)
 }
 
 func (a *DiscordAdapter) React(ctx context.Context, cfg channel.ChannelConfig, target string, messageID string, emoji string) error {
