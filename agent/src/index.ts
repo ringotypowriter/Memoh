@@ -27,8 +27,9 @@ function parseJwtExp(token: string): number | null {
   }
 }
 
+let refreshPromise: Promise<string> | null = null
+
 export const createAuthFetcher = (auth: AgentAuthContext): AuthFetcher => {
-  let refreshPromise: Promise<string> | null = null
   return async (url: string, options?: RequestInit) => {
     if (auth.bearer) {
       const exp = parseJwtExp(auth.bearer)

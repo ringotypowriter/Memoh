@@ -45,6 +45,7 @@ func TestRefreshTokenFromContext(t *testing.T) {
 	originalClaims, ok := token.Claims.(jwt.MapClaims)
 	assert.True(t, ok)
 	origIat := int64(originalClaims["iat"].(float64))
+	origExp := int64(originalClaims["exp"].(float64))
 
 	// Parse the new token
 	newToken, err := jwt.Parse(newTokenStr, func(token *jwt.Token) (interface{}, error) {
@@ -67,10 +68,9 @@ func TestRefreshTokenFromContext(t *testing.T) {
 	// 1. Ensure time has advanced
 	assert.Greater(t, newIat, origIat)
 
-	// 2. Ensure the refreshed token has a positive lifetime and does not exceed the configured default duration
-	lifetimeSeconds := newExp - newIat
-	assert.Greater(t, lifetimeSeconds, int64(0))
-	assert.LessOrEqual(t, lifetimeSeconds, int64(defaultDuration.Seconds()))
+	// 2. Ensure it calculated the original duration and used it (5 mins), NOT the default 1 hour
+	assert.Equal(t, newExp-newIat, origExp-origIat)
+	assert.Equal(t, int64(5*60), newExp-newIat)
 
 	// 3. Ensure the return value matches the claim
 	assert.Equal(t, newExpiresAt.Unix(), newExp)
