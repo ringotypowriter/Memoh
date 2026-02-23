@@ -293,3 +293,48 @@ func TestWebhookHandler_EventCallbackRequiresVerificationTokenWhenEncryptKeyMiss
 		t.Fatalf("expected no inbound calls, got %d", len(manager.calls))
 	}
 }
+
+func TestWebhookHandler_RejectsOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeWebhookStore{
+		configs: []channel.ChannelConfig{
+			{
+				ID:          "cfg-1",
+				BotID:       "bot-1",
+				ChannelType: Type,
+				Credentials: map[string]any{
+					"app_id":             "app",
+					"app_secret":         "secret",
+					"verification_token": "verify-token",
+					"inbound_mode":       "webhook",
+				},
+			},
+		},
+	}
+	manager := &fakeWebhookManager{}
+	h := NewWebhookHandler(nil, store, manager)
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/channels/feishu/webhook/cfg-1", strings.NewReader(strings.Repeat("x", int(webhookMaxBodyBytes)+1)))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("config_id")
+	c.SetParamValues("cfg-1")
+
+	err := h.Handle(c)
+	if err == nil {
+		t.Fatal("expected payload-too-large error")
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("expected HTTPError, got %T", err)
+	}
+	if he.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("unexpected status code: %d", he.Code)
+	}
+	if len(manager.calls) != 0 {
+		t.Fatalf("expected no inbound calls, got %d", len(manager.calls))
+	}
+}

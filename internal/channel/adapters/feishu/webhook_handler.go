@@ -25,6 +25,8 @@ type webhookInboundManager interface {
 	HandleInbound(ctx context.Context, cfg channel.ChannelConfig, msg channel.InboundMessage) error
 }
 
+const webhookMaxBodyBytes int64 = 1 << 20 // 1 MiB
+
 // WebhookHandler receives Feishu/Lark event-subscription callbacks.
 type WebhookHandler struct {
 	logger  *slog.Logger
@@ -87,9 +89,12 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "feishu inbound_mode is not webhook")
 	}
 
-	payload, err := io.ReadAll(c.Request().Body)
+	payload, err := io.ReadAll(io.LimitReader(c.Request().Body, webhookMaxBodyBytes+1))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("read body: %v", err))
+	}
+	if int64(len(payload)) > webhookMaxBodyBytes {
+		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, fmt.Sprintf("payload too large: max %d bytes", webhookMaxBodyBytes))
 	}
 	if err := validateWebhookCallbackAuth(payload, feishuCfg); err != nil {
 		return err
