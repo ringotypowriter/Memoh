@@ -26,7 +26,6 @@ namespace = "default"
 image = "docker.io/library/memoh-mcp:latest"
 snapshotter = "overlayfs"
 data_root = "/opt/memoh/data"
-data_mount = "/data"
 
 ## Postgres configuration
 [postgres]

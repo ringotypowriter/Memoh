@@ -103,10 +103,7 @@ func (h *ContainerdHandler) resolveContainerPath(botID, rawPath string) (fsPathC
 		containerPath = "/"
 	}
 
-	dataMount := strings.TrimSpace(h.cfg.DataMount)
-	if dataMount == "" {
-		dataMount = config.DefaultDataMount
-	}
+	dataMount := config.DefaultDataMount
 	dataMount = filepath.Clean(dataMount)
 
 	// Check whether the requested path falls under the data mount.
@@ -609,10 +606,7 @@ func (h *ContainerdHandler) FSDelete(c echo.Context) error {
 	}
 
 	// Prevent deleting the data mount root itself.
-	dataMount := strings.TrimSpace(h.cfg.DataMount)
-	if dataMount == "" {
-		dataMount = config.DefaultDataMount
-	}
+	dataMount := config.DefaultDataMount
 	if filepath.Clean(pc.containerPath) == filepath.Clean(dataMount) {
 		return echo.NewHTTPError(http.StatusForbidden, "cannot delete the data root directory")
 	}

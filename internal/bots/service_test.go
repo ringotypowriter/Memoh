@@ -44,7 +44,7 @@ func (d *fakeDBTX) QueryRow(ctx context.Context, sql string, args ...any) pgx.Ro
 func makeBotRow(botID, ownerUserID pgtype.UUID, botType string, allowGuest bool) *fakeRow {
 	return &fakeRow{
 		scanFunc: func(dest ...any) error {
-			if len(dest) < 17 {
+			if len(dest) < 21 {
 				return pgx.ErrNoRows
 			}
 			*dest[0].(*pgtype.UUID) = botID
@@ -54,16 +54,20 @@ func makeBotRow(botID, ownerUserID pgtype.UUID, botType string, allowGuest bool)
 			*dest[4].(*pgtype.Text) = pgtype.Text{}
 			*dest[5].(*bool) = true
 			*dest[6].(*string) = BotStatusReady
-			*dest[7].(*int32) = 30
-			*dest[8].(*string) = "en"
-			*dest[9].(*bool) = allowGuest
-			*dest[10].(*pgtype.UUID) = pgtype.UUID{}
-			*dest[11].(*pgtype.UUID) = pgtype.UUID{}
-			*dest[12].(*pgtype.UUID) = pgtype.UUID{}
-			*dest[13].(*pgtype.UUID) = pgtype.UUID{}
-			*dest[14].(*[]byte) = []byte(`{}`)
-			*dest[15].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
-			*dest[16].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+			*dest[7].(*int32) = 30   // MaxContextLoadTime
+			*dest[8].(*int32) = 4096 // MaxContextTokens
+			*dest[9].(*int32) = 10   // MaxInboxItems
+			*dest[10].(*string) = "en"
+			*dest[11].(*bool) = allowGuest
+			*dest[12].(*bool) = false      // ReasoningEnabled
+			*dest[13].(*string) = "medium" // ReasoningEffort
+			*dest[14].(*pgtype.UUID) = pgtype.UUID{}
+			*dest[15].(*pgtype.UUID) = pgtype.UUID{}
+			*dest[16].(*pgtype.UUID) = pgtype.UUID{}
+			*dest[17].(*pgtype.UUID) = pgtype.UUID{}
+			*dest[18].(*[]byte) = []byte(`{}`)
+			*dest[19].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
+			*dest[20].(*pgtype.Timestamptz) = pgtype.Timestamptz{}
 			return nil
 		},
 	}

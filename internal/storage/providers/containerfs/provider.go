@@ -17,7 +17,7 @@ const containerMediaRoot = "/data/media"
 // Provider stores media assets via the host-side bind mount path
 // that maps to /data inside bot containers.
 type Provider struct {
-	dataRoot string
+	dataRoot  string
 }
 
 // New creates a container-based storage provider.
@@ -79,7 +79,7 @@ func (p *Provider) Delete(_ context.Context, key string) error {
 // Routing key format: "<bot_id>/<storage_key>" → "/data/media/<storage_key>".
 func (p *Provider) AccessPath(key string) string {
 	_, sub := splitRoutingKey(key)
-	return containerMediaRoot + "/" + sub
+	return filepath.Join("/data", "media", sub)
 }
 
 // hostPath converts a routing key into the host-side file path.
@@ -104,11 +104,14 @@ func (p *Provider) hostPath(key string) (string, error) {
 }
 
 // OpenContainerFile opens a file from a bot's /data/ directory on the host.
-// containerPath must start with "/data/".
+// containerPath must start with the data mount path.
 func (p *Provider) OpenContainerFile(botID, containerPath string) (io.ReadCloser, error) {
-	const dataPrefix = "/data/"
+	dataPrefix := "/data"
+	if !strings.HasSuffix(dataPrefix, "/") {
+		dataPrefix += "/"
+	}
 	if !strings.HasPrefix(containerPath, dataPrefix) {
-		return nil, fmt.Errorf("path must start with /data/")
+		return nil, fmt.Errorf("path must start with %s", dataPrefix)
 	}
 	subPath := containerPath[len(dataPrefix):]
 	if subPath == "" || strings.Contains(subPath, "..") {

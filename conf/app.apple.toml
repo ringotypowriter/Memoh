@@ -29,7 +29,6 @@ jwt_expires_in = "168h"
 [mcp]
 image = "memohai/mcp:latest"
 data_root = "data"
-data_mount = "/data"
 
 [postgres]
 host = "127.0.0.1"

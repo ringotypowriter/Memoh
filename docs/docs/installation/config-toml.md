@@ -29,7 +29,6 @@ namespace = "default"
 image = "docker.io/library/memoh-mcp:latest"
 snapshotter = "overlayfs"
 data_root = "data"
-data_mount = "/data"
 
 [postgres]
 host = "127.0.0.1"
@@ -104,7 +103,6 @@ MCP (Model Context Protocol) container configuration. Each bot runs in a contain
 | `image`       | string | `"docker.io/library/memoh-mcp:latest"` | MCP container image        |
 | `snapshotter` | string | `"overlayfs"` | Containerd snapshotter                      |
 | `data_root`   | string | `"data"` | Host path for bot data (Docker: `/opt/memoh/data`) |
-| `data_mount`  | string | `"/data"` | Path inside container where data is mounted  |
 
 ### `[postgres]`
 

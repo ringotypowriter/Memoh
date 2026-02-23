@@ -294,10 +294,7 @@ func (m *Manager) buildVersionSpec(botID string) (ctr.ContainerSpec, error) {
 	if err != nil {
 		return ctr.ContainerSpec{}, err
 	}
-	dataMount := m.cfg.DataMount
-	if dataMount == "" {
-		dataMount = config.DefaultDataMount
-	}
+	dataMount := config.DefaultDataMount
 	resolvPath, err := ctr.ResolveConfSource(dataDir)
 	if err != nil {
 		return ctr.ContainerSpec{}, err
@@ -351,11 +348,7 @@ func (m *Manager) ensureDBRecords(ctx context.Context, botID, containerID, runti
 		return pgtype.UUID{}, err
 	}
 
-	containerPath := m.cfg.DataMount
-	if containerPath == "" {
-		containerPath = config.DefaultDataMount
-	}
-
+	containerPath := config.DefaultDataMount
 	if err := m.queries.UpsertContainer(ctx, dbsqlc.UpsertContainerParams{
 		BotID:         botUUID,
 		ContainerID:   containerID,

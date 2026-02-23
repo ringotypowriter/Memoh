@@ -392,7 +392,10 @@ func (p *Executor) resolveAttachmentRef(ctx context.Context, botID, ref, attType
 	}
 
 	// Container media path — resolve via asset storage.
-	const mediaMarker = "/data/media/"
+	mediaMarker := filepath.Join("/data", "media")
+	if !strings.HasSuffix(mediaMarker, "/") {
+		mediaMarker += "/"
+	}
 	if idx := strings.Index(ref, mediaMarker); idx >= 0 && p.assetResolver != nil {
 		storageKey := ref[idx+len(mediaMarker):]
 		asset, err := p.assetResolver.GetByStorageKey(ctx, botID, storageKey)
@@ -404,8 +407,11 @@ func (p *Executor) resolveAttachmentRef(ctx context.Context, botID, ref, attType
 		}
 	}
 
-	// Other container /data/ path — ingest into media store first.
-	const dataPrefix = "/data/"
+	// Other container data mount path — ingest into media store first.
+	dataPrefix := "/data"
+	if !strings.HasSuffix(dataPrefix, "/") {
+		dataPrefix += "/"
+	}
 	if strings.HasPrefix(ref, dataPrefix) && p.assetResolver != nil {
 		asset, err := p.assetResolver.IngestContainerFile(ctx, botID, ref)
 		if err == nil {

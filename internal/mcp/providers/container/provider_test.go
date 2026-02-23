@@ -227,8 +227,9 @@ func TestNormalizePath(t *testing.T) {
 		{"", ""},
 		{".", "."},
 	}
+	exec := &Executor{execWorkDir: "/data"}
 	for _, tt := range tests {
-		got := normalizePath(tt.in)
+		got := exec.normalizePath(tt.in)
 		if got != tt.want {
 			t.Errorf("normalizePath(%q) = %q, want %q", tt.in, got, tt.want)
 		}

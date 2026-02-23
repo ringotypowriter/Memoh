@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -54,6 +55,10 @@ func NewExecutor(log *slog.Logger, execRunner ExecRunner, execWorkDir string) *E
 
 // ListTools returns read, write, list, edit, and exec tool descriptors.
 func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionContext) ([]mcpgw.ToolDescriptor, error) {
+	wd := p.execWorkDir
+	if wd == "" {
+		wd = defaultExecWorkDir
+	}
 	return []mcpgw.ToolDescriptor{
 		{
 			Name:        toolRead,
@@ -61,7 +66,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path": map[string]any{"type": "string", "description": "file path (relative to /data or absolute inside container)"},
+					"path": map[string]any{"type": "string", "description": fmt.Sprintf("file path (relative to %s or absolute inside container)", wd)},
 				},
 				"required": []string{"path"},
 			},
@@ -72,7 +77,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":    map[string]any{"type": "string", "description": "file path (relative to /data or absolute inside container)"},
+					"path":    map[string]any{"type": "string", "description": fmt.Sprintf("file path (relative to %s or absolute inside container)", wd)},
 					"content": map[string]any{"type": "string", "description": "file content"},
 				},
 				"required": []string{"path", "content"},
@@ -84,7 +89,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":      map[string]any{"type": "string", "description": "directory path (relative to /data or absolute inside container)"},
+					"path":      map[string]any{"type": "string", "description": fmt.Sprintf("directory path (relative to %s or absolute inside container)", wd)},
 					"recursive": map[string]any{"type": "boolean", "description": "list recursively"},
 				},
 				"required": []string{"path"},
@@ -96,7 +101,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path":     map[string]any{"type": "string", "description": "file path (relative to /data or absolute inside container)"},
+					"path":     map[string]any{"type": "string", "description": fmt.Sprintf("file path (relative to %s or absolute inside container)", wd)},
 					"old_text": map[string]any{"type": "string", "description": "exact text to find"},
 					"new_text": map[string]any{"type": "string", "description": "replacement text"},
 				},
@@ -105,7 +110,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 		},
 		{
 			Name:        toolExec,
-			Description: "Execute a command in the bot container. Runs in the bot's data directory (/data) by default.",
+			Description: fmt.Sprintf("Execute a command in the bot container. Runs in the bot's data directory (%s) by default.", wd),
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -115,7 +120,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 					},
 					"work_dir": map[string]any{
 						"type":        "string",
-						"description": "Working directory inside the container (default: /data)",
+						"description": fmt.Sprintf("Working directory inside the container (default: %s)", wd),
 					},
 				},
 				"required": []string{"command"},
@@ -126,12 +131,15 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 
 // normalizePath converts paths that the LLM may send as /data/... into relative
 // paths under the working directory. e.g. /data/test.txt -> test.txt, /data -> .
-func normalizePath(path string) string {
+func (p *Executor) normalizePath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return path
 	}
-	const prefix = "/data"
+	prefix := p.execWorkDir
+	if prefix == "" {
+		prefix = defaultExecWorkDir
+	}
 	if path == prefix {
 		return "."
 	}
@@ -150,7 +158,7 @@ func (p *Executor) CallTool(ctx context.Context, session mcpgw.ToolSessionContex
 
 	switch toolName {
 	case toolRead:
-		filePath := normalizePath(mcpgw.StringArg(arguments, "path"))
+		filePath := p.normalizePath(mcpgw.StringArg(arguments, "path"))
 		if filePath == "" {
 			return mcpgw.BuildToolErrorResult("path is required"), nil
 		}
@@ -163,7 +171,7 @@ func (p *Executor) CallTool(ctx context.Context, session mcpgw.ToolSessionContex
 		}), nil
 
 	case toolWrite:
-		filePath := normalizePath(mcpgw.StringArg(arguments, "path"))
+		filePath := p.normalizePath(mcpgw.StringArg(arguments, "path"))
 		content := mcpgw.StringArg(arguments, "content")
 		if filePath == "" {
 			return mcpgw.BuildToolErrorResult("path is required"), nil
@@ -174,7 +182,7 @@ func (p *Executor) CallTool(ctx context.Context, session mcpgw.ToolSessionContex
 		return mcpgw.BuildToolSuccessResult(map[string]any{"ok": true}), nil
 
 	case toolList:
-		dirPath := normalizePath(mcpgw.StringArg(arguments, "path"))
+		dirPath := p.normalizePath(mcpgw.StringArg(arguments, "path"))
 		if dirPath == "" {
 			dirPath = "."
 		}
@@ -196,7 +204,7 @@ func (p *Executor) CallTool(ctx context.Context, session mcpgw.ToolSessionContex
 		return mcpgw.BuildToolSuccessResult(map[string]any{"path": dirPath, "entries": entriesMaps}), nil
 
 	case toolEdit:
-		filePath := normalizePath(mcpgw.StringArg(arguments, "path"))
+		filePath := p.normalizePath(mcpgw.StringArg(arguments, "path"))
 		oldText := mcpgw.StringArg(arguments, "old_text")
 		newText := mcpgw.StringArg(arguments, "new_text")
 		if filePath == "" || oldText == "" {

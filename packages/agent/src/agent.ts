@@ -113,10 +113,11 @@ export const createAgent = (
   }
 
   const loadSystemFiles = async () => {
+    const home = '/data'
     const [identityContent, soulContent, toolsContent] = await Promise.all([
-      fs.readText('/data/IDENTITY.md'),
-      fs.readText('/data/SOUL.md'),
-      fs.readText('/data/TOOLS.md'),
+      fs.readText(`${home}/IDENTITY.md`),
+      fs.readText(`${home}/SOUL.md`),
+      fs.readText(`${home}/TOOLS.md`),
     ]).catch((error) => {
       console.error(error)
       return ['', '', '']

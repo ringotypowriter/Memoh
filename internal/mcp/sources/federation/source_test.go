@@ -85,7 +85,7 @@ func TestSourceListToolsIncludesSSETools(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
-	if tools[0].Name != "remote_sse.search" {
+	if tools[0].Name != "remote_sse_search" {
 		t.Fatalf("unexpected tool alias: %s", tools[0].Name)
 	}
 }
@@ -113,7 +113,7 @@ func TestSourceCallToolRoutesToSSEConnection(t *testing.T) {
 	}
 	source := NewSource(slog.Default(), gateway, lister)
 
-	result, err := source.CallTool(context.Background(), mcpgw.ToolSessionContext{BotID: "bot-1"}, "remote_sse.search", map[string]any{"query": "hello"})
+	result, err := source.CallTool(context.Background(), mcpgw.ToolSessionContext{BotID: "bot-1"}, "remote_sse_search", map[string]any{"query": "hello"})
 	if err != nil {
 		t.Fatalf("call tool failed: %v", err)
 	}

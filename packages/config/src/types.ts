@@ -40,7 +40,6 @@ export interface McpConfig {
   image: string;
   snapshotter: string;
   data_root: string;
-  data_mount: string;
 }
 
 export interface PostgresConfig {

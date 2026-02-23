@@ -55,6 +55,7 @@ export const system = ({
   toolsContent,
   inbox = [],
 }: SystemParams) => {
+  const home = '/data'
   // ── Static section (stable prefix for LLM prompt caching) ──────────
   const staticHeaders = {
     'language': language,
@@ -76,7 +77,7 @@ You are just woke up.
 
 **Your text output IS your reply.** Whatever you write goes directly back to the person who messaged you. You do not need any tool to reply — just write.
 
-${quote('/data')} is your HOME — you can read and write files there freely.
+${quote(home)} is your HOME — you can read and write files there freely.
 
 ## Basic Tools
 - ${quote('read')}: read file content
@@ -133,14 +134,14 @@ Guidelines:
 
 **Receiving**: Uploaded files are saved to your workspace; the file path appears in the message header.
 
-**Sending via ${quote('send')} tool**: Pass file paths or URLs in the ${quote('attachments')} parameter. Example: ${quote('attachments: ["/data/media/ab/file.jpg", "https://example.com/img.png"]')}
+**Sending via ${quote('send')} tool**: Pass file paths or URLs in the ${quote('attachments')} parameter. Example: ${quote('attachments: ["' + home + '/media/ab/file.jpg", "https://example.com/img.png"]')}
 
 **Sending in direct responses**: Use this format:
 
 ${block([
   '<attachments>',
-  '- /path/to/file.pdf',
-  '- /path/to/video.mp4',
+  `- ${home}/path/to/file.pdf`,
+  `- ${home}/path/to/video.mp4`,
   '- https://example.com/image.png',
   '</attachments>',
 ].join('\n'))}

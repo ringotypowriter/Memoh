@@ -457,11 +457,7 @@ func provideToolGatewayService(log *slog.Logger, cfg config.Config, channelManag
 	memoryExec := mcpmemory.NewExecutor(log, memoryService, chatService, accountService)
 	webExec := mcpweb.NewExecutor(log, settingsService, searchProviderService)
 	inboxExec := mcpinbox.NewExecutor(log, inboxService)
-	execWorkDir := cfg.MCP.DataMount
-	if strings.TrimSpace(execWorkDir) == "" {
-		execWorkDir = config.DefaultDataMount
-	}
-	fsExec := mcpcontainer.NewExecutor(log, manager, execWorkDir)
+	fsExec := mcpcontainer.NewExecutor(log, manager, config.DefaultDataMount)
 
 	fedGateway := handlers.NewMCPFederationGateway(log, containerdHandler)
 	fedSource := mcpfederation.NewSource(log, fedGateway, mcpConnService)
@@ -482,10 +478,7 @@ func provideToolGatewayService(log *slog.Logger, cfg config.Config, channelManag
 func provideMemoryHandler(log *slog.Logger, service *memory.Service, chatService *conversation.Service, accountService *accounts.Service, cfg config.Config, manager *mcp.Manager) *handlers.MemoryHandler {
 	h := handlers.NewMemoryHandler(log, service, chatService, accountService)
 	if manager != nil {
-		execWorkDir := cfg.MCP.DataMount
-		if strings.TrimSpace(execWorkDir) == "" {
-			execWorkDir = config.DefaultDataMount
-		}
+		execWorkDir := config.DefaultDataMount
 		h.SetMemoryFS(memory.NewMemoryFS(log, manager, execWorkDir))
 	}
 	return h

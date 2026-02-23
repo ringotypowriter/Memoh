@@ -27,7 +27,6 @@ jwt_expires_in = "168h"
 # image = "docker.io/library/memoh-mcp:dev"
 # snapshotter = "overlayfs"
 # data_root = "data"
-# data_mount = "/data"
 
 [postgres]
 host = "127.0.0.1"

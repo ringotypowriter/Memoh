@@ -29,6 +29,7 @@ type InboundIdentity struct {
 	UserID            string
 	DisplayName       string
 	AvatarURL         string
+	BotType           string
 	ForceReply        bool
 }
 
@@ -212,6 +213,7 @@ func (r *IdentityResolver) Resolve(ctx context.Context, cfg channel.ChannelConfi
 		if err != nil {
 			return state, err
 		}
+		state.Identity.BotType = botType
 		if strings.EqualFold(strings.TrimSpace(botType), "personal") {
 			ownerUserID, err := r.policy.BotOwnerUserID(ctx, botID)
 			if err != nil {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -223,6 +224,9 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 				slog.String("query", strings.TrimSpace(text)),
 				slog.Int("attachments", len(attachments)),
 			)
+		}
+		if !strings.EqualFold(identity.BotType, "personal") {
+			p.persistInboundUser(ctx, resolved.RouteID, identity, msg, text, attachments, "passive_sync")
 		}
 		p.createInboxItem(ctx, identity, msg, text, attachments, resolved.RouteID)
 		return nil
@@ -1658,10 +1662,10 @@ func isHTTPURL(raw string) bool {
 
 // resolveContainerPathAsset attempts to match a container-internal file path
 // to an existing media asset by extracting the storage key from the path.
-// For non-/data/media/ paths, it ingests the file into the media store first.
+// For non-media-marker paths, it ingests the file into the media store first.
 // Returns true if the asset was resolved and item was updated.
 func (p *ChannelInboundProcessor) resolveContainerPathAsset(ctx context.Context, botID, accessPath string, item *channel.Attachment) bool {
-	// Try /data/media/ lookup first.
+	// Try media marker lookup first.
 	storageKey := extractStorageKey(accessPath, botID)
 	if storageKey != "" {
 		asset, err := p.mediaService.GetByStorageKey(ctx, botID, storageKey)
@@ -1671,8 +1675,12 @@ func (p *ChannelInboundProcessor) resolveContainerPathAsset(ctx context.Context,
 		}
 	}
 
-	// For any /data/ path, ingest the file into media store.
-	if strings.HasPrefix(accessPath, "/data/") {
+	// For any path starting with data mount, ingest the file into media store.
+	dataPrefix := "/data"
+	if !strings.HasSuffix(dataPrefix, "/") {
+		dataPrefix += "/"
+	}
+	if strings.HasPrefix(accessPath, dataPrefix) {
 		asset, err := p.mediaService.IngestContainerFile(ctx, botID, accessPath)
 		if err != nil {
 			if p.logger != nil {
@@ -1705,8 +1713,11 @@ func applyAssetToAttachment(asset media.Asset, botID string, item *channel.Attac
 
 // extractStorageKey derives the media storage key from a container-internal
 // access path. The expected path format is /data/media/<storage_key>.
-func extractStorageKey(accessPath, _ string) string {
-	const marker = "/data/media/"
+func extractStorageKey(accessPath string, botID string) string {
+	marker := filepath.Join("/data", "media")
+	if !strings.HasSuffix(marker, "/") {
+		marker += "/"
+	}
 	idx := strings.Index(accessPath, marker)
 	if idx < 0 {
 		return ""
@@ -1826,7 +1837,7 @@ func mapChannelToChatAttachments(attachments []channel.Attachment) []conversatio
 		ca := conversation.ChatAttachment{
 			Type:        string(att.Type),
 			PlatformKey: att.PlatformKey,
-			ContentHash:     att.ContentHash,
+			ContentHash: att.ContentHash,
 			Name:        att.Name,
 			Mime:        attachment.NormalizeMime(att.Mime),
 			Size:        att.Size,

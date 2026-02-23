@@ -181,10 +181,7 @@ func (h *ContainerdHandler) CreateContainer(c echo.Context) error {
 	if err != nil {
 		h.logger.Warn("filepath.Abs failed", slog.Any("error", err))
 	}
-	dataMount := strings.TrimSpace(h.cfg.DataMount)
-	if dataMount == "" {
-		dataMount = config.DefaultDataMount
-	}
+	dataMount := config.DefaultDataMount
 	dataDir := filepath.Join(dataRoot, "bots", botID)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
@@ -816,10 +813,7 @@ func (h *ContainerdHandler) SetupBotContainer(ctx context.Context, botID string)
 	} else {
 		dataRoot = absRoot
 	}
-	dataMount := strings.TrimSpace(h.cfg.DataMount)
-	if dataMount == "" {
-		dataMount = config.DefaultDataMount
-	}
+	dataMount := config.DefaultDataMount
 	dataDir := filepath.Join(dataRoot, "bots", botID)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err

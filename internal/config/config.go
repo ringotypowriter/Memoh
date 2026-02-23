@@ -74,7 +74,6 @@ type MCPConfig struct {
 	Image        string `toml:"image"`
 	Snapshotter  string `toml:"snapshotter"`
 	DataRoot     string `toml:"data_root"`
-	DataMount    string `toml:"data_mount"`
 	CNIBinaryDir string `toml:"cni_bin_dir"`
 	CNIConfigDir string `toml:"cni_conf_dir"`
 }
@@ -136,7 +135,6 @@ func Load(path string) (Config, error) {
 		MCP: MCPConfig{
 			Image:        DefaultMCPImage,
 			DataRoot:     DefaultDataRoot,
-			DataMount:    DefaultDataMount,
 			CNIBinaryDir: DefaultCNIBinaryDir,
 			CNIConfigDir: DefaultCNIConfigDir,
 		},

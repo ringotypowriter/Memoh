@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/memohai/memoh/internal/config"
 	mcpgw "github.com/memohai/memoh/internal/mcp"
 	"github.com/memohai/memoh/internal/mcp/providers/container"
 )
@@ -48,7 +49,7 @@ func NewMemoryFS(log *slog.Logger, runner container.ExecRunner, workDir string) 
 		log = slog.Default()
 	}
 	if strings.TrimSpace(workDir) == "" {
-		workDir = "/data"
+		workDir = config.DefaultDataMount
 	}
 	return &MemoryFS{
 		execRunner: runner,

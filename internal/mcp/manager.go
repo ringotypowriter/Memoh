@@ -334,10 +334,7 @@ func (m *Manager) dataRoot() string {
 }
 
 func (m *Manager) dataMount() string {
-	if m.cfg.DataMount == "" {
-		return config.DefaultDataMount
-	}
-	return m.cfg.DataMount
+	return config.DefaultDataMount
 }
 
 func (m *Manager) imageRef() string {
