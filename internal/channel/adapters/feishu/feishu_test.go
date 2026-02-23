@@ -294,6 +294,34 @@ func TestIsFeishuImageAttachment(t *testing.T) {
 	}
 }
 
+func TestResolveFeishuFileType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		file string
+		mime string
+		want string
+	}{
+		{name: "video mime", file: "clip.bin", mime: "video/mp4", want: larkim.FileTypeMp4},
+		{name: "pdf mime", file: "doc.bin", mime: "application/pdf", want: larkim.FileTypePdf},
+		{name: "doc ext", file: "a.docx", mime: "application/octet-stream", want: larkim.FileTypeDoc},
+		{name: "xls ext", file: "a.xlsx", mime: "application/octet-stream", want: larkim.FileTypeXls},
+		{name: "ppt ext", file: "a.pptx", mime: "application/octet-stream", want: larkim.FileTypePpt},
+		{name: "zip mime", file: "a.bin", mime: "application/zip", want: larkim.FileTypeStream},
+		{name: "tar gz ext", file: "backup.tar.gz", mime: "application/octet-stream", want: larkim.FileTypeStream},
+		{name: "default stream", file: "notes.txt", mime: "text/plain", want: larkim.FileTypeStream},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resolveFeishuFileType(tc.file, tc.mime); got != tc.want {
+				t.Fatalf("resolveFeishuFileType(%q,%q)=%q want=%q", tc.file, tc.mime, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildFeishuStreamCardContent(t *testing.T) {
 	t.Parallel()
 

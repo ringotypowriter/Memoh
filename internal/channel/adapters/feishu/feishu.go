@@ -1,6 +1,7 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,14 +18,20 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
+	attachmentpkg "github.com/memohai/memoh/internal/attachment"
 	"github.com/memohai/memoh/internal/channel"
 	"github.com/memohai/memoh/internal/channel/adapters/common"
 	"github.com/memohai/memoh/internal/media"
 )
 
+type assetOpener interface {
+	Open(ctx context.Context, botID, contentHash string) (io.ReadCloser, media.Asset, error)
+}
+
 // FeishuAdapter implements the channel.Adapter, channel.Sender, and channel.Receiver interfaces for Feishu.
 type FeishuAdapter struct {
 	logger *slog.Logger
+	assets assetOpener
 }
 
 const processingBusyReactionType = "Typing"
@@ -104,6 +111,11 @@ func NewFeishuAdapter(log *slog.Logger) *FeishuAdapter {
 	return &FeishuAdapter{
 		logger: log.With(slog.String("adapter", "feishu")),
 	}
+}
+
+// SetAssetOpener injects media asset reader for content_hash attachment delivery.
+func (a *FeishuAdapter) SetAssetOpener(opener assetOpener) {
+	a.assets = opener
 }
 
 // Type returns the Feishu channel type.
@@ -516,7 +528,7 @@ func (a *FeishuAdapter) Send(ctx context.Context, cfg channel.ChannelConfig, msg
 
 	if len(msg.Message.Attachments) > 0 {
 		for _, att := range msg.Message.Attachments {
-			if err := a.sendAttachment(ctx, client, receiveID, receiveType, att, msg.Message.Text); err != nil {
+			if err := a.sendAttachment(ctx, client, receiveID, receiveType, cfg.BotID, att); err != nil {
 				return err
 			}
 		}
@@ -657,7 +669,7 @@ func (a *FeishuAdapter) handleResponse(configID string, resp *larkim.CreateMessa
 	return nil
 }
 
-func (a *FeishuAdapter) sendAttachment(ctx context.Context, client *lark.Client, receiveID, receiveType string, att channel.Attachment, text string) error {
+func (a *FeishuAdapter) sendAttachment(ctx context.Context, client *lark.Client, receiveID, receiveType, botID string, att channel.Attachment) error {
 	var msgType string
 	var contentMap map[string]string
 	sourcePlatform := strings.TrimSpace(att.SourcePlatform)
@@ -671,32 +683,22 @@ func (a *FeishuAdapter) sendAttachment(ctx context.Context, client *lark.Client,
 			contentMap = map[string]string{"file_key": platformKey}
 		}
 	} else {
-		downloadURL := strings.TrimSpace(att.URL)
-		if downloadURL == "" {
-			return fmt.Errorf("failed to download attachment: url is required when platform key is unavailable")
-		}
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+		reader, resolvedMime, resolvedName, err := a.resolveAttachmentUploadReader(ctx, att, botID)
 		if err != nil {
-			return fmt.Errorf("failed to build download request: %w", err)
+			return err
 		}
-		httpClient := &http.Client{Timeout: 60 * time.Second}
-		resp, err := httpClient.Do(httpReq)
-		if err != nil {
-			return fmt.Errorf("failed to download attachment: %w", err)
+		defer func() {
+			_ = reader.Close()
+		}()
+		typeProbe := att
+		if strings.TrimSpace(typeProbe.Mime) == "" {
+			typeProbe.Mime = strings.TrimSpace(resolvedMime)
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("failed to download attachment, status: %d", resp.StatusCode)
-		}
-		maxBytes := media.MaxAssetBytes
-		if resp.ContentLength > maxBytes {
-			return fmt.Errorf("%w: max %d bytes", media.ErrAssetTooLarge, maxBytes)
-		}
-		if strings.HasPrefix(att.Mime, "image/") || att.Type == channel.AttachmentImage {
+		if isFeishuImageAttachment(typeProbe) {
 			uploadReq := larkim.NewCreateImageReqBuilder().
 				Body(larkim.NewCreateImageReqBodyBuilder().
 					ImageType(larkim.ImageTypeMessage).
-					Image(resp.Body).
+					Image(reader).
 					Build()).
 				Build()
 			uploadResp, err := client.Im.V1.Image.Create(ctx, uploadReq)
@@ -713,8 +715,8 @@ func (a *FeishuAdapter) sendAttachment(ctx context.Context, client *lark.Client,
 			msgType = larkim.MsgTypeImage
 			contentMap = map[string]string{"image_key": *uploadResp.Data.ImageKey}
 		} else {
-			fileType := resolveFeishuFileType(att.Name, att.Mime)
-			fileName := strings.TrimSpace(att.Name)
+			fileType := resolveFeishuFileType(resolvedName, resolvedMime)
+			fileName := strings.TrimSpace(resolvedName)
 			if fileName == "" {
 				fileName = "attachment"
 			}
@@ -722,7 +724,7 @@ func (a *FeishuAdapter) sendAttachment(ctx context.Context, client *lark.Client,
 				Body(larkim.NewCreateFileReqBodyBuilder().
 					FileType(fileType).
 					FileName(fileName).
-					File(resp.Body).
+					File(reader).
 					Build()).
 				Build()
 			uploadResp, err := client.Im.V1.File.Create(ctx, uploadReq)
@@ -757,6 +759,76 @@ func (a *FeishuAdapter) sendAttachment(ctx context.Context, client *lark.Client,
 
 	sendResp, err := client.Im.V1.Message.Create(ctx, req)
 	return a.handleResponse("", sendResp, err)
+}
+
+func (a *FeishuAdapter) resolveAttachmentUploadReader(ctx context.Context, att channel.Attachment, fallbackBotID string) (io.ReadCloser, string, string, error) {
+	assetID := strings.TrimSpace(att.ContentHash)
+	botID := strings.TrimSpace(fallbackBotID)
+	if botID == "" && att.Metadata != nil {
+		if value, ok := att.Metadata["bot_id"].(string); ok {
+			botID = strings.TrimSpace(value)
+		}
+	}
+	if assetID != "" && botID != "" && a.assets != nil {
+		reader, asset, err := a.assets.Open(ctx, botID, assetID)
+		if err == nil {
+			resolvedMime := strings.TrimSpace(att.Mime)
+			if resolvedMime == "" {
+				resolvedMime = strings.TrimSpace(asset.Mime)
+			}
+			return reader, resolvedMime, strings.TrimSpace(att.Name), nil
+		}
+		if a.logger != nil {
+			a.logger.Debug("feishu attachment storage open failed",
+				slog.String("bot_id", botID),
+				slog.String("content_hash", assetID),
+				slog.Any("error", err),
+			)
+		}
+	}
+
+	rawBase64 := strings.TrimSpace(att.Base64)
+	downloadURL := strings.TrimSpace(att.URL)
+	if rawBase64 == "" && strings.HasPrefix(strings.ToLower(downloadURL), "data:") {
+		rawBase64 = downloadURL
+	}
+	if rawBase64 != "" {
+		decoded, err := attachmentpkg.DecodeBase64(rawBase64, media.MaxAssetBytes)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to decode attachment base64: %w", err)
+		}
+		data, err := media.ReadAllWithLimit(decoded, media.MaxAssetBytes)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to read attachment base64: %w", err)
+		}
+		resolvedMime := strings.TrimSpace(att.Mime)
+		if resolvedMime == "" {
+			resolvedMime = strings.TrimSpace(attachmentpkg.MimeFromDataURL(rawBase64))
+		}
+		return io.NopCloser(bytes.NewReader(data)), resolvedMime, strings.TrimSpace(att.Name), nil
+	}
+
+	if downloadURL == "" {
+		return nil, "", "", fmt.Errorf("attachment reference is required: provide platform_key/content_hash/base64/url")
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to build download request: %w", err)
+	}
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to download attachment: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		return nil, "", "", fmt.Errorf("failed to download attachment, status: %d", resp.StatusCode)
+	}
+	if resp.ContentLength > media.MaxAssetBytes {
+		_ = resp.Body.Close()
+		return nil, "", "", fmt.Errorf("%w: max %d bytes", media.ErrAssetTooLarge, media.MaxAssetBytes)
+	}
+	return resp.Body, strings.TrimSpace(att.Mime), strings.TrimSpace(att.Name), nil
 }
 
 // ResolveAttachment resolves a Feishu attachment reference to a byte stream.
@@ -832,21 +904,24 @@ func isFeishuImageAttachment(att channel.Attachment) bool {
 // resolveFeishuFileType maps MIME type and filename to a Feishu file type constant.
 func resolveFeishuFileType(name, mime string) string {
 	lower := strings.ToLower(mime)
+	lowerName := strings.ToLower(strings.TrimSpace(name))
 	switch {
 	case strings.Contains(lower, "mp4") || strings.Contains(lower, "video"):
 		return larkim.FileTypeMp4
 	case strings.Contains(lower, "pdf"):
 		return larkim.FileTypePdf
-	case strings.Contains(lower, "word") || strings.Contains(lower, "msword") || strings.HasSuffix(strings.ToLower(name), ".doc") || strings.HasSuffix(strings.ToLower(name), ".docx"):
+	case strings.Contains(lower, "word") || strings.Contains(lower, "msword") || strings.HasSuffix(lowerName, ".doc") || strings.HasSuffix(lowerName, ".docx"):
 		return larkim.FileTypeDoc
-	case strings.Contains(lower, "excel") || strings.Contains(lower, "spreadsheet") || strings.HasSuffix(strings.ToLower(name), ".xls") || strings.HasSuffix(strings.ToLower(name), ".xlsx"):
+	case strings.Contains(lower, "excel") || strings.Contains(lower, "spreadsheet") || strings.HasSuffix(lowerName, ".xls") || strings.HasSuffix(lowerName, ".xlsx"):
 		return larkim.FileTypeXls
-	case strings.Contains(lower, "powerpoint") || strings.Contains(lower, "presentation") || strings.HasSuffix(strings.ToLower(name), ".ppt") || strings.HasSuffix(strings.ToLower(name), ".pptx"):
+	case strings.Contains(lower, "powerpoint") || strings.Contains(lower, "presentation") || strings.HasSuffix(lowerName, ".ppt") || strings.HasSuffix(lowerName, ".pptx"):
 		return larkim.FileTypePpt
 	case strings.Contains(lower, "zip") || strings.Contains(lower, "compressed") || strings.Contains(lower, "archive"):
-		return "zip"
+		return larkim.FileTypeStream
+	case strings.HasSuffix(lowerName, ".zip") || strings.HasSuffix(lowerName, ".tar") || strings.HasSuffix(lowerName, ".tgz") || strings.HasSuffix(lowerName, ".tar.gz") || strings.HasSuffix(lowerName, ".rar") || strings.HasSuffix(lowerName, ".7z") || strings.HasSuffix(lowerName, ".gz") || strings.HasSuffix(lowerName, ".bz2") || strings.HasSuffix(lowerName, ".xz"):
+		return larkim.FileTypeStream
 	default:
-		return larkim.FileTypePdf
+		return larkim.FileTypeStream
 	}
 }
 
