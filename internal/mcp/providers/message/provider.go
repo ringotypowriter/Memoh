@@ -77,7 +77,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 	if p.sender != nil && p.resolver != nil {
 		tools = append(tools, mcpgw.ToolDescriptor{
 			Name:        toolSend,
-			Description: "Send a message to a channel or session. Supports text, attachments, and replies.",
+			Description: "Send a message to a DIFFERENT channel or person — NOT for replying to the current conversation. Use this only for cross-channel messaging, forwarding, or replying to inbox items.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
