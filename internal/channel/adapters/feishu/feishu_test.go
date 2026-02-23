@@ -560,6 +560,38 @@ func TestExtractFeishuInboundPostMentionOtherIgnored(t *testing.T) {
 	}
 }
 
+func TestResolveConfiguredBotOpenIDPrefersSelfIdentity(t *testing.T) {
+	t.Parallel()
+
+	cfg := channel.ChannelConfig{
+		SelfIdentity: map[string]any{
+			"open_id": "ou_self_1",
+		},
+		ExternalIdentity: "open_id:ou_external_1",
+	}
+	if got := resolveConfiguredBotOpenID(cfg); got != "ou_self_1" {
+		t.Fatalf("expected self identity open_id, got %q", got)
+	}
+}
+
+func TestResolveConfiguredBotOpenIDFromExternalIdentity(t *testing.T) {
+	t.Parallel()
+
+	cfg := channel.ChannelConfig{ExternalIdentity: "open_id:ou_external_2"}
+	if got := resolveConfiguredBotOpenID(cfg); got != "ou_external_2" {
+		t.Fatalf("expected external identity open_id, got %q", got)
+	}
+}
+
+func TestResolveConfiguredBotOpenIDIgnoresNonOpenIDExternalIdentity(t *testing.T) {
+	t.Parallel()
+
+	cfg := channel.ChannelConfig{ExternalIdentity: "chat_id:oc_group_1"}
+	if got := resolveConfiguredBotOpenID(cfg); got != "" {
+		t.Fatalf("expected empty open_id for non-open external identity, got %q", got)
+	}
+}
+
 func TestAddProcessingReactionFirstSuccess(t *testing.T) {
 	t.Parallel()
 

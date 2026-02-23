@@ -362,16 +362,7 @@ func (a *FeishuAdapter) Connect(ctx context.Context, cfg channel.ChannelConfig, 
 		}
 		return channel.NewConnection(cfg, func(context.Context) error { return nil }), nil
 	}
-	botOpenID := channel.ReadString(cfg.SelfIdentity, "open_id")
-	if botOpenID == "" {
-		if discovered, _, err := a.DiscoverSelf(ctx, cfg.Credentials); err == nil {
-			if id, ok := discovered["open_id"].(string); ok {
-				botOpenID = strings.TrimSpace(id)
-			}
-		} else if a.logger != nil {
-			a.logger.Warn("discover self fallback failed", slog.String("config_id", cfg.ID), slog.Any("error", err))
-		}
-	}
+	botOpenID := a.resolveBotOpenID(ctx, cfg)
 	if a.logger != nil {
 		a.logger.Info("bot identity", slog.String("config_id", cfg.ID), slog.String("bot_open_id", botOpenID))
 	}
@@ -423,6 +414,7 @@ func (a *FeishuAdapter) Connect(ctx context.Context, cfg channel.ChannelConfig, 
 				}
 				return nil
 			}
+			a.enrichSenderProfile(connCtx, cfg, event, &msg)
 			msg.BotID = cfg.BotID
 			if a.logger != nil {
 				isMentioned := false

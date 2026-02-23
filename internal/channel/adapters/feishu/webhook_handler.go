@@ -95,14 +95,7 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 		return err
 	}
 
-	botOpenID := strings.TrimSpace(channel.ReadString(cfg.SelfIdentity, "open_id"))
-	if botOpenID == "" {
-		if discovered, _, discoverErr := h.adapter.DiscoverSelf(context.WithoutCancel(c.Request().Context()), cfg.Credentials); discoverErr == nil {
-			if id, ok := discovered["open_id"].(string); ok {
-				botOpenID = strings.TrimSpace(id)
-			}
-		}
-	}
+	botOpenID := h.adapter.resolveBotOpenID(context.WithoutCancel(c.Request().Context()), cfg)
 
 	eventDispatcher := dispatcher.NewEventDispatcher(feishuCfg.VerificationToken, feishuCfg.EncryptKey)
 	eventDispatcher.OnP2MessageReceiveV1(func(_ context.Context, event *larkim.P2MessageReceiveV1) error {
@@ -110,6 +103,7 @@ func (h *WebhookHandler) Handle(c echo.Context) error {
 		if strings.TrimSpace(msg.Message.PlainText()) == "" && len(msg.Message.Attachments) == 0 {
 			return nil
 		}
+		h.adapter.enrichSenderProfile(context.WithoutCancel(c.Request().Context()), cfg, event, &msg)
 		msg.BotID = cfg.BotID
 		return h.manager.HandleInbound(context.WithoutCancel(c.Request().Context()), cfg, msg)
 	})

@@ -226,7 +226,9 @@ func parseFeishuUserInput(raw string) (userID, userIDType string) {
 	if strings.HasPrefix(raw, "u_") || strings.HasPrefix(raw, "u-") {
 		return raw, larkcontact.UserIdTypeUserId
 	}
-	return raw, larkcontact.UserIdTypeOpenId
+	// For raw IDs without explicit prefix, default to user_id. In practice
+	// open_id is usually "ou_*", while bare IDs are commonly user_id.
+	return raw, larkcontact.UserIdTypeUserId
 }
 
 func feishuUserToEntry(u *larkcontact.User) channel.DirectoryEntry {
