@@ -47,7 +47,7 @@ func (s *discordOutboundStream) Push(ctx context.Context, event channel.StreamEv
         return nil
 
     case channel.StreamEventDelta:
-        if event.Delta == "" {
+        if event.Delta == "" || event.Phase == channel.StreamPhaseReasoning {
             return nil
         }
         s.mu.Lock()
