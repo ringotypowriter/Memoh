@@ -130,14 +130,59 @@ prepare_assets() {
   fi
 
   log "building agent executable (${bun_compile_target})"
+  patch_jsdom_style_loader_for_compile
+  trap 'restore_jsdom_style_loader_patch' RETURN
   (
     cd "$ROOT_DIR/agent"
     bun build src/index.ts --compile --target "$bun_compile_target" --outfile "$AGENT_DIR/$agent_bin_name"
   )
+  restore_jsdom_style_loader_patch
+  trap - RETURN
   chmod +x "$AGENT_DIR/$agent_bin_name" || true
   compress_agent_bin_if_enabled "$AGENT_DIR/$agent_bin_name" "$TARGET_OS"
 
   log "embedded assets prepared (${target_key})"
+}
+
+JSDOM_STYLE_RULES_FILE=""
+JSDOM_STYLE_RULES_BACKUP=""
+
+patch_jsdom_style_loader_for_compile() {
+  local css_path css_json
+  JSDOM_STYLE_RULES_FILE="$(node -e "try{process.stdout.write(require.resolve('jsdom/lib/jsdom/living/helpers/style-rules.js',{paths:['$ROOT_DIR/agent']}))}catch{process.exit(1)}" 2>/dev/null || true)"
+  css_path="$(node -e "try{process.stdout.write(require.resolve('jsdom/lib/jsdom/browser/default-stylesheet.css',{paths:['$ROOT_DIR/agent']}))}catch{process.exit(1)}" 2>/dev/null || true)"
+
+  if [[ -z "$JSDOM_STYLE_RULES_FILE" || -z "$css_path" ]]; then
+    log "skip jsdom patch (jsdom sources not resolved)"
+    return 0
+  fi
+
+  JSDOM_STYLE_RULES_BACKUP="${JSDOM_STYLE_RULES_FILE}.memoh.bak"
+  cp "$JSDOM_STYLE_RULES_FILE" "$JSDOM_STYLE_RULES_BACKUP"
+  css_json="$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(fs.readFileSync(process.argv[1],'utf8')))" "$css_path")"
+
+  node - "$JSDOM_STYLE_RULES_FILE" "$css_json" <<'NODE'
+const fs = require("fs");
+const file = process.argv[2];
+const css = process.argv[3];
+let src = fs.readFileSync(file, "utf8");
+const pattern = /const defaultStyleSheet = fs\.readFileSync\([\s\S]*?\);\n/;
+if (!pattern.test(src)) {
+  console.error("[release] jsdom patch target not found");
+  process.exit(1);
+}
+src = src.replace(pattern, `const defaultStyleSheet = ${css};\n`);
+fs.writeFileSync(file, src, "utf8");
+NODE
+
+  log "patched jsdom style loader for compile-time embedding"
+}
+
+restore_jsdom_style_loader_patch() {
+  if [[ -n "$JSDOM_STYLE_RULES_BACKUP" && -f "$JSDOM_STYLE_RULES_BACKUP" && -n "$JSDOM_STYLE_RULES_FILE" ]]; then
+    mv "$JSDOM_STYLE_RULES_BACKUP" "$JSDOM_STYLE_RULES_FILE"
+    log "restored jsdom style loader patch"
+  fi
 }
 
 compress_agent_bin_if_enabled() {

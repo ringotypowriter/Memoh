@@ -82,39 +82,12 @@ jobs:
           UPX_ARGS: "-3"
         run: scripts/release.sh
 
-      - name: Upload tar artifact
-        if: matrix.goos != 'windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload zip artifact
-        if: matrix.goos == 'windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*.zip
-          if-no-files-found: error
-          retention-days: 1
-
-  publish-release:
-    needs: build-binaries
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: release-assets-*
-          path: dist
-          merge-multiple: true
-
-      - name: Publish release assets
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
           tag_name: ${{ github.ref_name }}
           overwrite_files: true
         env:
