@@ -51,8 +51,8 @@ func TestCheckerListChecks(t *testing.T) {
 		},
 		&fakeToolLister{
 			items: []mcp.ToolDescriptor{
-				{Name: "hello_world.ping"},
-				{Name: "hello_world.echo"},
+				{Name: "hello_world_ping"},
+				{Name: "hello_world_echo"},
 			},
 		},
 	)

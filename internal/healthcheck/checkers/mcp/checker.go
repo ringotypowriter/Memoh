@@ -152,7 +152,7 @@ func (c *Checker) ListChecks(ctx context.Context, botID string) []healthcheck.Ch
 		prefix := sanitizeToolPrefix(conn.Name)
 		toolCount := 0
 		if prefix != "" {
-			toolPrefix := prefix + "."
+			toolPrefix := prefix + "_"
 			for _, tool := range tools {
 				if strings.HasPrefix(strings.TrimSpace(tool.Name), toolPrefix) {
 					toolCount++

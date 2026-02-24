@@ -22,16 +22,22 @@ concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PUSH: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'release') }}
+  REGISTRY: ghcr.io
+
 permissions:
   contents: read
   packages: write
   id-token: write
 
 jobs:
-  docker:
-    runs-on: ubuntu-latest
+  build:
     strategy:
+      fail-fast: false
       matrix:
+        image: [server, agent, web, mcp]
+        platform: [linux/amd64, linux/arm64]
         include:
           - image: server
             dockerfile: docker/Dockerfile.server
@@ -41,9 +47,113 @@ jobs:
             dockerfile: docker/Dockerfile.web
           - image: mcp
             dockerfile: docker/Dockerfile.mcp
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Go
+        if: matrix.image == 'server' || matrix.image == 'mcp'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Pre-warm Go mod cache
+        if: matrix.image == 'server' || matrix.image == 'mcp'
+        run: |
+          mkdir -p .go-cache
+          GOMODCACHE=$(pwd)/.go-cache go mod download
+
+      - name: Login to Docker Hub
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          outputs: ${{ env.PUSH == 'true' && format('type=image,"name={0}/{1}/{2}",push-by-digest=true,name-canonical=true,push=true,compression=zstd', env.REGISTRY, github.repository_owner, matrix.image) || '' }}
+          build-contexts: ${{ (matrix.image == 'server' || matrix.image == 'mcp') && format('gomodcache={0}/.go-cache', github.workspace) || '' }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT_HASH=${{ github.sha }}
+            VITE_API_URL=/api
+            VITE_AGENT_URL=/agent
+          cache-from: |
+            type=gha,scope=${{ matrix.image }}-${{ matrix.platform }}
+            type=registry,ref=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:buildcache-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          cache-to: |
+            type=gha,scope=${{ matrix.image }}-${{ matrix.platform }},mode=max
+            ${{ env.PUSH == 'true' && format('type=registry,ref={0}/{1}/{2}:buildcache-{3},mode=max,compression=zstd', env.REGISTRY, github.repository_owner, matrix.image, matrix.platform == 'linux/amd64' && 'amd64' || 'arm64') || '' }}
+
+      - name: Export digest
+        if: env.PUSH == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: env.PUSH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'release')
+    needs: build
+    strategy:
+      matrix:
+        image: [server, agent, web, mcp]
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
@@ -59,50 +169,12 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=sha
-          labels: |
-            org.opencontainers.image.title=memoh-${{ matrix.image }}
-            org.opencontainers.image.description=Memoh ${{ matrix.image }} - Multi-member AI agent platform
-            org.opencontainers.image.vendor=memohai
 
-      - name: Set up QEMU
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: ${{ startsWith(github.ref, 'refs/tags/') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            COMMIT_HASH=${{ github.sha }}
-            BUILD_TIME=${{ fromJson(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
-            VITE_API_URL=/api
-            VITE_AGENT_URL=/agent
-          provenance: ${{ startsWith(github.ref, 'refs/tags/') }}
-          sbom: ${{ startsWith(github.ref, 'refs/tags/') }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@sha256:%s ' *)
+        env:
+          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta.outputs.json }}

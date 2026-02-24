@@ -15,6 +15,7 @@
     <img src="https://img.shields.io/github/forks/memohai/Memoh?style=social" alt="Forks" />
     <img src="https://img.shields.io/github/last-commit/memohai/Memoh" alt="Last Commit" />
     <img src="https://img.shields.io/github/issues/memohai/Memoh" alt="Issues" />
+    <img src="https://github.com/memohai/Memoh/actions/workflows/docker.yml/badge.svg" alt="Docker" />
   </div>
   <div align="center">
     [<a href="https://t.me/memohai">Telegram 群组</a>]

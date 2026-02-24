@@ -1,37 +1,33 @@
 # syntax=docker/dockerfile:1
 
-# ---- Stage 1: Build server binary ----
-FROM golang:1.25-alpine AS server-builder
+# ---- Stage 0: Cache Context Fallback ----
+FROM scratch AS gomodcache
 
+# ---- Stage 1: Build base with dependencies ----
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build-base
 WORKDIR /build
 RUN apk add --no-cache git make
-
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=bind,from=gomodcache,target=/tmp/gomodcache \
+    set -eux; \
+    if [ -d /tmp/gomodcache/cache/download ]; then \
+      cp -a /tmp/gomodcache/. /go/pkg/mod/; \
+    fi; \
     go mod download
-
 COPY . .
 
+# ---- Stage 2: Build server binary ----
+FROM build-base AS server-builder
 ARG VERSION=dev
 ARG COMMIT_HASH=unknown
 ARG BUILD_TIME=unknown
 ARG TARGETOS
 ARG TARGETARCH
-
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     set -eux; \
-    build_os="${TARGETOS:-linux}"; \
-    build_arch="${TARGETARCH:-$(uname -m)}"; \
-    case "$build_arch" in \
-      x86_64) build_arch="amd64" ;; \
-      aarch64) build_arch="arm64" ;; \
-    esac; \
-    case "$build_arch" in \
-      amd64|arm64) ;; \
-      *) echo "unsupported TARGETARCH: $build_arch (only amd64/arm64)"; exit 1 ;; \
-    esac; \
-    CGO_ENABLED=0 GOOS="$build_os" GOARCH="$build_arch" \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath \
     -ldflags "-s -w \
       -X github.com/memohai/memoh/internal/version.Version=${VERSION} \
@@ -39,23 +35,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -X github.com/memohai/memoh/internal/version.BuildTime=${BUILD_TIME}" \
     -o memoh-server ./cmd/agent/main.go
 
-# ---- Stage 2: Build MCP binary ----
-FROM golang:1.25-alpine AS mcp-builder
-
-WORKDIR /src
-RUN apk add --no-cache ca-certificates git
-
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
-
-COPY . .
-
-ARG TARGETARCH=amd64
+# ---- Stage 3: Build MCP binary ----
+FROM build-base AS mcp-builder
+ARG TARGETARCH
 ARG COMMIT_HASH=unknown
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath \
     -ldflags "-s -w -X github.com/memohai/memoh/internal/version.CommitHash=${COMMIT_HASH}" \
     -o /out/mcp ./cmd/mcp
@@ -88,14 +74,15 @@ FROM alpine:latest AS oci-exporter
 
 COPY --from=mcp-rootfs /tmp/rootfs.tar /tmp/layer.tar
 ARG MCP_IMAGE_TAG=docker.io/library/memoh-mcp:latest
+ARG TARGETARCH
 
 RUN set -e \
     && LAYER_SHA=$(sha256sum /tmp/layer.tar | awk '{print $1}') \
     && LAYER_SIZE=$(wc -c < /tmp/layer.tar) \
     && mkdir -p "/tmp/image/${LAYER_SHA}" /out \
     && mv /tmp/layer.tar "/tmp/image/${LAYER_SHA}/layer.tar" \
-    && printf '{"architecture":"amd64","os":"linux","created":"1970-01-01T00:00:00Z","config":{"Entrypoint":["/opt/entrypoint.sh"],"WorkingDir":"/app","Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]},"rootfs":{"type":"layers","diff_ids":["sha256:%s"]},"history":[{"created":"1970-01-01T00:00:00Z","comment":"memoh-mcp image"}]}' \
-       "${LAYER_SHA}" > /tmp/config.json \
+    && printf '{"architecture":"%s","os":"linux","created":"1970-01-01T00:00:00Z","config":{"Entrypoint":["/opt/entrypoint.sh"],"WorkingDir":"/app","Env":["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]},"rootfs":{"type":"layers","diff_ids":["sha256:%s"]},"history":[{"created":"1970-01-01T00:00:00Z","comment":"memoh-mcp image"}]}' \
+       "${TARGETARCH:-amd64}" "${LAYER_SHA}" > /tmp/config.json \
     && CONFIG_SHA=$(sha256sum /tmp/config.json | awk '{print $1}') \
     && mv /tmp/config.json "/tmp/image/${CONFIG_SHA}.json" \
     && printf '[{"Config":"%s.json","RepoTags":["%s"],"Layers":["%s/layer.tar"]}]' \
