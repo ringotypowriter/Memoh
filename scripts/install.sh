@@ -106,7 +106,7 @@ if [ "$SILENT" = false ]; then
     esac
   fi
 
-  printf "  Data directory (bind mount for containerd/memoh data) [%s]: " "$WORKSPACE/data" > /dev/tty
+  printf "  Data directory (bind mount for server container data) [%s]: " "$WORKSPACE/data" > /dev/tty
   read -r input < /dev/tty || true
   if [ -n "$input" ]; then
     case "$input" in
@@ -169,8 +169,8 @@ export MEMOH_DATA_DIR
 mkdir -p "$MEMOH_DATA_DIR"
 
 echo ""
-echo "${GREEN}Starting services (first build may take a few minutes)...${NC}"
-$DOCKER compose up -d --build
+echo "${GREEN}Starting services (first startup may take a few minutes)...${NC}"
+$DOCKER compose up -d
 
 echo ""
 echo "${GREEN}========================================${NC}"
