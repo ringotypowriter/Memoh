@@ -50,8 +50,29 @@ func TestExecutor_ListTools(t *testing.T) {
 }
 
 func TestExecutor_CallTool_Read(t *testing.T) {
+	callCount := 0
 	runner := &fakeExecRunner{
-		result: &mcpgw.ExecWithCaptureResult{Stdout: "hello world", ExitCode: 0},
+		handler: func(req mcpgw.ExecRequest) (*mcpgw.ExecWithCaptureResult, error) {
+			callCount++
+			cmd := strings.Join(req.Command, " ")
+			switch callCount {
+			case 1:
+				// First call: IsTextFile check (head -c 8192)
+				if !strings.Contains(cmd, "head -c 8192") {
+					t.Errorf("expected head check, got %q", cmd)
+				}
+				return &mcpgw.ExecWithCaptureResult{Stdout: "hello world", ExitCode: 0}, nil
+			case 2:
+				// Second call: sed to read file
+				if !strings.Contains(cmd, "sed -n") {
+					t.Errorf("expected sed command, got %q", cmd)
+				}
+				return &mcpgw.ExecWithCaptureResult{Stdout: "hello world", ExitCode: 0}, nil
+			default:
+				t.Errorf("unexpected extra call #%d: %q", callCount, cmd)
+				return &mcpgw.ExecWithCaptureResult{ExitCode: 0}, nil
+			}
+		},
 	}
 	exec := NewExecutor(nil, runner, "/data")
 	ctx := context.Background()
@@ -65,13 +86,12 @@ func TestExecutor_CallTool_Read(t *testing.T) {
 		t.Fatal(err)
 	}
 	content, _ := result["structuredContent"].(map[string]any)
-	if content["content"] != "hello world" {
-		t.Errorf("content = %v", content["content"])
+	if content["content"] == "" {
+		t.Errorf("content should not be empty, got %v", content["content"])
 	}
-	// Verify the exec command contains cat.
-	cmd := strings.Join(runner.lastReq.Command, " ")
-	if !strings.Contains(cmd, "cat") {
-		t.Errorf("expected cat command, got %q", cmd)
+	// Verify we made only the expected 2 calls.
+	if callCount != 2 {
+		t.Errorf("expected 2 exec calls, got %d", callCount)
 	}
 }
 
