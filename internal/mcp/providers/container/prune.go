@@ -104,13 +104,18 @@ func itoa(n int) string {
 	var buf [20]byte
 	i := len(buf)
 	sign := n < 0
+	var u uint64
 	if sign {
-		n = -n
+		// Avoid overflow for MinInt.
+		u = uint64(-(n + 1))
+		u++
+	} else {
+		u = uint64(n)
 	}
-	for n > 0 {
+	for u > 0 {
 		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
+		buf[i] = byte('0' + u%10)
+		u /= 10
 	}
 	if sign {
 		i--

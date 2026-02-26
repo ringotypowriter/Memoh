@@ -18,8 +18,9 @@ func (r *scriptedReadRunner) ExecWithCapture(ctx context.Context, req mcpgw.Exec
 	return r.handler(req)
 }
 
-func TestParseReadOutput_LongSingleLine(t *testing.T) {
-	longLine := strings.Repeat("a", 2*1024*1024) // 2MB single line without '\n'
+func TestParseReadOutput_LongSingleLineIsTruncated(t *testing.T) {
+	// 2MB single line without '\n' should still be readable in one page and truncated by rune limit.
+	longLine := strings.Repeat("a", 2*1024*1024)
 
 	result := parseReadOutput(longLine, 1, readMaxLines, 1)
 
@@ -81,6 +82,8 @@ func TestReadFile_DoesNotScanWholeFileForTotalLines(t *testing.T) {
 	runner.handler = func(req mcpgw.ExecRequest) (*mcpgw.ExecWithCaptureResult, error) {
 		cmd := strings.Join(req.Command, " ")
 		switch {
+		case strings.Contains(cmd, "head -c 8192"):
+			return &mcpgw.ExecWithCaptureResult{Stdout: "line\n", ExitCode: 0}, nil
 		case strings.Contains(cmd, "sed -n"):
 			return &mcpgw.ExecWithCaptureResult{Stdout: strings.Repeat("line\n", readMaxLines), ExitCode: 0}, nil
 		default:
@@ -109,5 +112,58 @@ func TestReadFile_DoesNotScanWholeFileForTotalLines(t *testing.T) {
 		if strings.Contains(cmd, "awk 'END {print NR}'") || strings.Contains(cmd, "wc -l") {
 			t.Fatalf("unexpected full-file line-count command: %q", cmd)
 		}
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected exactly 2 commands to be executed, got %d", len(runner.calls))
+	}
+
+	formatted := FormatReadResult(result)
+	if !strings.Contains(formatted, "Continue with line_offset=401 if more content exists.") {
+		t.Fatalf("formatted output missing continuation hint, got: %q", formatted)
+	}
+}
+
+func TestReadFile_BinaryContentReturnsError(t *testing.T) {
+	runner := &scriptedReadRunner{}
+	runner.handler = func(req mcpgw.ExecRequest) (*mcpgw.ExecWithCaptureResult, error) {
+		cmd := strings.Join(req.Command, " ")
+		if strings.Contains(cmd, "head -c 8192") {
+			return &mcpgw.ExecWithCaptureResult{
+				Stdout:   string([]byte{'a', 0, 'b'}),
+				ExitCode: 0,
+			}, nil
+		}
+		t.Fatalf("unexpected command: %q", cmd)
+		return nil, nil
+	}
+
+	result, err := ReadFile(context.Background(), runner, "bot-1", "/data", "test.txt", 1, 10)
+	if err == nil {
+		t.Fatalf("expected binary-file error, got nil result=%v", result)
+	}
+	if !strings.Contains(err.Error(), "Read tool only supports text files") {
+		t.Fatalf("error = %q, want binary-file message", err.Error())
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected binary detection to stop before sed, got %d calls", len(runner.calls))
+	}
+}
+
+func TestFormatReadResult_ContinuationHintWhenMaxLinesReached(t *testing.T) {
+	content := strings.Repeat("line\n", readMaxLines)
+	result := parseReadOutput(content, 1, readMaxLines, -1)
+	if !result.MaxLinesReached {
+		t.Fatalf("MaxLinesReached = false, want true")
+	}
+	if result.EndOfFile {
+		t.Fatalf("EndOfFile = true, want false")
+	}
+
+	formatted := FormatReadResult(result)
+	if !strings.Contains(formatted, "Limit 200 lines reached.\nContinue with line_offset=201 if more content exists.") {
+		t.Fatalf("formatted output missing continuation after limit, got: %q", formatted)
+	}
+	if strings.Contains(formatted, "Limit 200 lines reached. Continue with line_offset=201 if more content exists.") {
+		t.Fatalf("status messages should be on separate lines, got: %q", formatted)
 	}
 }

@@ -78,7 +78,7 @@ func (p *Executor) ListTools(ctx context.Context, session mcpgw.ToolSessionConte
 					},
 					"n_lines": map[string]any{
 						"type":        "integer",
-						"description": fmt.Sprintf("Number of lines to read. Default: %d. Max: %d.", readMaxLines, readMaxLines),
+						"description": fmt.Sprintf("Number of lines to read per call. Default: %d (the per-call maximum). Use a smaller value with line_offset for finer pagination. Max: %d.", readMaxLines, readMaxLines),
 						"minimum":     1,
 						"maximum":     readMaxLines,
 						"default":     readMaxLines,
@@ -181,24 +181,30 @@ func (p *Executor) CallTool(ctx context.Context, session mcpgw.ToolSessionContex
 
 		// Parse optional pagination params.
 		lineOffset := 1
-		if offset, ok, _ := mcpgw.IntArg(arguments, "line_offset"); ok && offset > 0 {
+		offset, ok, err := mcpgw.IntArg(arguments, "line_offset")
+		if err != nil {
+			return mcpgw.BuildToolErrorResult(fmt.Sprintf("invalid line_offset: %v", err)), nil
+		}
+		if ok {
+			if offset < 1 {
+				return mcpgw.BuildToolErrorResult("line_offset must be >= 1"), nil
+			}
 			lineOffset = offset
 		}
+
 		nLines := readMaxLines
-		if n, ok, _ := mcpgw.IntArg(arguments, "n_lines"); ok && n > 0 {
+		n, ok, err := mcpgw.IntArg(arguments, "n_lines")
+		if err != nil {
+			return mcpgw.BuildToolErrorResult(fmt.Sprintf("invalid n_lines: %v", err)), nil
+		}
+		if ok {
+			if n < 1 {
+				return mcpgw.BuildToolErrorResult("n_lines must be >= 1"), nil
+			}
 			if n > readMaxLines {
 				n = readMaxLines
 			}
 			nLines = n
-		}
-
-		// Check if file is text first.
-		isText, err := IsTextFile(ctx, p.execRunner, botID, p.execWorkDir, filePath)
-		if err != nil {
-			return mcpgw.BuildToolErrorResult(fmt.Sprintf("cannot read file: %v", err)), nil
-		}
-		if !isText {
-			return mcpgw.BuildToolErrorResult("file appears to be binary. read tool only supports text files"), nil
 		}
 
 		result, err := ReadFile(ctx, p.execRunner, botID, p.execWorkDir, filePath, lineOffset, nLines)

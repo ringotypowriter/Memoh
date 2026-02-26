@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -23,9 +24,11 @@ type ReadResult struct {
 	EndOfFile            bool
 }
 
+const readBinaryProbeBytes = 8 * 1024
+
 // ReadFile reads a file inside the container with pagination support.
 // It reads from line_offset (1-indexed) for up to n_lines lines.
-// Limits: max 200 lines / 5KB per call (defined in prune.go).
+// Limits: max 200 lines / 5KB per call (see readMaxLines and readMaxBytes constants).
 func ReadFile(ctx context.Context, runner ExecRunner, botID, workDir, filePath string, lineOffset, nLines int) (*ReadResult, error) {
 	if lineOffset < 1 {
 		lineOffset = 1
@@ -37,9 +40,33 @@ func ReadFile(ctx context.Context, runner ExecRunner, botID, workDir, filePath s
 		nLines = readMaxLines
 	}
 
+	// Probe only the file prefix first to avoid streaming huge binary payloads via sed.
+	probeCmd := fmt.Sprintf("head -c %d %s", readBinaryProbeBytes, ShellQuote(filePath))
+	probe, err := runner.ExecWithCapture(ctx, mcpgw.ExecRequest{
+		BotID:   botID,
+		Command: []string{"/bin/sh", "-c", wrapWithCd(workDir, probeCmd)},
+		WorkDir: workDir,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if probe.ExitCode != 0 {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(probe.Stderr))
+	}
+	if bytes.IndexByte([]byte(probe.Stdout), 0) >= 0 {
+		return nil, fmt.Errorf("file appears to be binary. Read tool only supports text files")
+	}
+
 	// Use sed to read specific line range efficiently.
 	// sed -n '10,110p' file -> reads lines 10-110 (inclusive)
-	endLine := lineOffset + nLines - 1
+	endLine := lineOffset
+	if nLines > 1 {
+		if lineOffset > math.MaxInt-(nLines-1) {
+			endLine = math.MaxInt
+		} else {
+			endLine = lineOffset + nLines - 1
+		}
+	}
 	sedCmd := fmt.Sprintf("sed -n '%d,%dp' %s", lineOffset, endLine, ShellQuote(filePath))
 
 	result, err := runner.ExecWithCapture(ctx, mcpgw.ExecRequest{
@@ -176,28 +203,31 @@ func FormatReadResult(r *ReadResult) string {
 		if !r.MaxLinesReached && !r.MaxBytesReached {
 			messages = append(messages, "End of file.")
 		}
-	} else if r.TotalLinesAvailable > 0 {
-		messages = append(messages, fmt.Sprintf("Total %d lines. Continue with line_offset=%d.",
-			r.TotalLinesAvailable, r.EndLine+1))
-	} else if !r.MaxLinesReached && !r.MaxBytesReached {
-		// Unknown total but not EOF - suggest continue anyway
-		messages = append(messages, fmt.Sprintf("Continue with line_offset=%d if more content exists.", r.EndLine+1))
+	} else if r.EndLine >= r.StartLine {
+		nextOffset := r.EndLine
+		if r.EndLine < math.MaxInt {
+			nextOffset = r.EndLine + 1
+		}
+		if r.TotalLinesAvailable > 0 {
+			messages = append(messages, fmt.Sprintf("Total %d lines. Continue with line_offset=%d.",
+				r.TotalLinesAvailable, nextOffset))
+		} else {
+			// Unknown total but not EOF - suggest continue anyway.
+			messages = append(messages, fmt.Sprintf("Continue with line_offset=%d if more content exists.", nextOffset))
+		}
 	}
 
 	if len(r.TruncatedLineNumbers) > 0 {
 		messages = append(messages, fmt.Sprintf("Truncated: %s.", formatTruncatedLines(r.TruncatedLineNumbers)))
 	}
 
-	// Write status line.
+	// Write status messages on separate lines for readability.
 	if len(messages) > 0 {
 		buf.WriteString("\n")
-		for i, msg := range messages {
-			if i > 0 {
-				buf.WriteString(" ")
-			}
+		for _, msg := range messages {
 			buf.WriteString(msg)
+			buf.WriteString("\n")
 		}
-		buf.WriteString("\n")
 	}
 
 	return buf.String()
@@ -218,45 +248,4 @@ func ReadFileSimple(ctx context.Context, runner ExecRunner, botID, workDir, file
 		return "", fmt.Errorf("%s", strings.TrimSpace(result.Stderr))
 	}
 	return pruneReadOutput(result.Stdout), nil
-}
-
-// CountLines counts lines in a file efficiently.
-func CountLines(ctx context.Context, runner ExecRunner, botID, workDir, filePath string) (int, error) {
-	// Use NR instead of wc -l so files without trailing '\n' are counted correctly.
-	lineCountCmd := "awk 'END {print NR}' " + ShellQuote(filePath)
-	result, err := runner.ExecWithCapture(ctx, mcpgw.ExecRequest{
-		BotID:   botID,
-		Command: []string{"/bin/sh", "-c", wrapWithCd(workDir, lineCountCmd)},
-		WorkDir: workDir,
-	})
-	if err != nil {
-		return 0, err
-	}
-	if result.ExitCode != 0 {
-		return 0, fmt.Errorf("%s", strings.TrimSpace(result.Stderr))
-	}
-
-	var count int
-	_, err = fmt.Sscanf(strings.TrimSpace(result.Stdout), "%d", &count)
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
-// IsTextFile checks if a file appears to be a text file by checking for null bytes.
-func IsTextFile(ctx context.Context, runner ExecRunner, botID, workDir, filePath string) (bool, error) {
-	result, err := runner.ExecWithCapture(ctx, mcpgw.ExecRequest{
-		BotID:   botID,
-		Command: []string{"/bin/sh", "-c", wrapWithCd(workDir, "head -c 8192 "+ShellQuote(filePath))},
-		WorkDir: workDir,
-	})
-	if err != nil {
-		return false, err
-	}
-	if result.ExitCode != 0 {
-		return false, fmt.Errorf("%s", strings.TrimSpace(result.Stderr))
-	}
-
-	return !bytes.Contains([]byte(result.Stdout), []byte{0}), nil
 }
