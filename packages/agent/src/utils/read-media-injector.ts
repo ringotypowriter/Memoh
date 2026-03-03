@@ -2,7 +2,7 @@ import { ImagePart, PrepareStepFunction, ToolSet, UserModelMessage, tool } from 
 import { z } from 'zod'
 import { ModelConfig, ModelInput, hasInputModality } from '../types/model'
 
-const READ_MEDIA_TOOL_NAME = 'readMedia'
+const READ_MEDIA_TOOL_NAME = 'read_media'
 
 const isImageMime = (mime: string): boolean => {
   return mime.trim().toLowerCase().startsWith('image/')
@@ -33,13 +33,13 @@ const loadImageAsDataUrl = async (
     const header = response.headers.get('content-type') ?? ''
     const mime = header.split(';')[0]?.trim() ?? ''
     if (!mime || !isImageMime(mime)) {
-      return { ok: false, error: 'readMedia only supports image files' }
+      return { ok: false, error: 'read_media only supports image files' }
     }
     return { ok: true, dataUrl: `data:${mime};base64,${base64}`, mime }
   } catch (error) {
     console.error(error)
     const message = error instanceof Error ? error.message : String(error)
-    return { ok: false, error: `readMedia failed to load image: ${message}` }
+    return { ok: false, error: `read_media failed to load image: ${message}` }
   }
 }
 
@@ -71,7 +71,7 @@ export const createPrepareStepWithReadMedia = (params: {
       }
       const toolCallId = typeof options?.toolCallId === 'string' ? options.toolCallId : ''
       if (!toolCallId) {
-        return buildReadMediaToolError('readMedia missing toolCallId')
+        return buildReadMediaToolError('read_media missing toolCallId')
       }
       if (!cachedImages.has(toolCallId)) {
         cachedImages.set(toolCallId, null)

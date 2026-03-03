@@ -80,7 +80,7 @@ export const system = ({
 
   const basicTools = [
     `- ${quote('read')}: read file content`,
-    supportsImageInput ? `- ${quote('readMedia')}: view the media` : null,
+    supportsImageInput ? `- ${quote('read_media')}: view the media` : null,
     `- ${quote('write')}: write file content`,
     `- ${quote('list')}: list directory entries`,
     `- ${quote('edit')}: replace exact text in a file`,

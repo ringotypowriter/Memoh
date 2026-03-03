@@ -10,7 +10,7 @@ const baseModelConfig: ModelConfig = {
   input: [ModelInput.Image],
 }
 
-describe('readMedia runtime', () => {
+describe('read_media runtime', () => {
   it('caches image and injects it into messages', async () => {
     const fs = {
       download: async () =>
@@ -23,7 +23,7 @@ describe('readMedia runtime', () => {
       fs,
       systemPrompt: 'sys',
     })
-    const readMedia = tools.readMedia
+    const readMedia = tools.read_media
     const output = await readMedia.execute(
       { path: '/data/media/a.png' },
       { toolCallId: 'call-1' },
@@ -54,7 +54,7 @@ describe('readMedia runtime', () => {
       fs,
       systemPrompt: 'sys',
     })
-    const readMedia = tools.readMedia
+    const readMedia = tools.read_media
     const output = await readMedia.execute(
       { path: '/data/media/a.png' },
       { toolCallId: 'call-2' },
@@ -84,7 +84,7 @@ describe('readMedia runtime', () => {
       fs,
       systemPrompt: 'sys',
     })
-    const readMedia = tools.readMedia
+    const readMedia = tools.read_media
     const first = readMedia.execute(
       { path: '/data/media/a.png' },
       { toolCallId: 'call-1' },
