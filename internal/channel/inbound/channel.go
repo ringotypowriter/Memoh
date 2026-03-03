@@ -326,7 +326,8 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		Reply:           replyRef,
 		SourceMessageID: sourceMessageID,
 		Metadata: map[string]any{
-			"route_id": resolved.RouteID,
+			"route_id":          resolved.RouteID,
+			"conversation_type": msg.Conversation.Type,
 		},
 	})
 	if err != nil {

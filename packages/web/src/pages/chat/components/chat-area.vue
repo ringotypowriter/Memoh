@@ -103,9 +103,10 @@
             <InputGroup>
               <InputGroupTextarea
                 v-model="inputText"
-                class="pr-24 max-h-15 resize-none"
+                class=" max-h-15 resize-none break-all!"
                 :placeholder="activeChatReadOnly ? $t('chat.readonlyHint') : $t('chat.inputPlaceholder')"
                 :disabled="!currentBotId || activeChatReadOnly"
+                style="scrollbar-width: none;"
                 @keydown.enter.exact="handleKeydown"
                 @paste="handlePaste"
               />
@@ -124,6 +125,19 @@
                 >
                   <FontAwesomeIcon
                     :icon="['fas', 'paperclip']"
+                    class="size-3.5"
+                  />
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  :disabled="!currentBotId"
+                  :aria-label="$t('chat.files')"
+                  @click="fileManagerOpen = true"
+                >
+                  <FontAwesomeIcon
+                    :icon="['fas', 'folder-open']"
                     class="size-3.5"
                   />
                 </Button>
@@ -151,19 +165,6 @@
                   <FontAwesomeIcon
                     :icon="['fas', 'spinner']"
                     class="size-3.5 animate-spin"
-                  />
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  :disabled="!currentBotId"
-                  :aria-label="$t('chat.files')"
-                  @click="fileManagerOpen = true"
-                >
-                  <FontAwesomeIcon
-                    :icon="['fas', 'folder-open']"
-                    class="size-3.5"
                   />
                 </Button>
               </InputGroupAddon>

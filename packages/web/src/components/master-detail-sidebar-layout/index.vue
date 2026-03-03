@@ -1,9 +1,8 @@
 <template>
   <div class="w-full mx-auto">
     <div class="model-select">
-      <SidebarProvider
-        :open="true"
-        class="min-h-[initial]! flex **:data-[sidebar=sidebar]:bg-transparent absolute inset-0"
+      <SidebarProvider   
+        class="min-h-[initial]! flex **:data-[sidebar=sidebar]:bg-transparent absolute inset-0"   
       >
         <Sidebar class="h-full relative top-0">
           <SidebarHeader>
@@ -16,9 +15,12 @@
             <slot name="sidebar-footer" />
           </SidebarFooter>
         </Sidebar>
-        <section class="flex-1 h-full">
+        <section class="flex-1 min-w-0 h-full">
           <slot name="detail" />
         </section>
+        <div class="fixed right-4 top-0 h-12 flex z-1000">        
+          <ToggleSide />
+        </div>
       </SidebarProvider>
     </div>
   </div>
@@ -30,6 +32,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-  SidebarProvider,
+  SidebarProvider
 } from '@memoh/ui'
+import ToggleSide from './ToggleSide.vue'
 </script>
