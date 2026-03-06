@@ -785,6 +785,69 @@ func TestChannelInboundProcessorIngestsBase64Attachment(t *testing.T) {
 	}
 }
 
+func TestChannelInboundProcessorIngestsQQFileAttachmentWithOriginalExt(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-qq-file"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-qq-file", RouteID: "route-qq-file"}}
+	gateway := &fakeChatGateway{
+		resp: conversation.ChatResponse{
+			Messages: []conversation.ModelMessage{
+				{Role: "assistant", Content: conversation.NewTextContent("ok")},
+			},
+		},
+	}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	mediaSvc := &fakeMediaIngestor{nextID: "asset-qq-file-1", nextMime: "text/plain"}
+	processor.SetMediaService(mediaSvc)
+	sender := &fakeReplySender{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, "# hello\n")
+	}))
+	defer server.Close()
+
+	cfg := channel.ChannelConfig{ID: "cfg-qq-file", BotID: "bot-1", ChannelType: channel.ChannelType("qq")}
+	msg := channel.InboundMessage{
+		BotID:   "bot-1",
+		Channel: channel.ChannelType("qq"),
+		Message: channel.Message{
+			ID:   "msg-qq-file-1",
+			Text: "[User sent 1 attachment]",
+			Attachments: []channel.Attachment{
+				{
+					Type: channel.AttachmentFile,
+					URL:  server.URL + "/yachiyo_baike.md",
+					Name: "yachiyo_baike.md",
+					Mime: "file",
+				},
+			},
+		},
+		ReplyTarget: "c2c:user-openid",
+		Sender:      channel.Identity{SubjectID: "qq-user"},
+		Conversation: channel.Conversation{
+			ID:   "qq-user",
+			Type: "direct",
+		},
+	}
+
+	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mediaSvc.calls != 1 {
+		t.Fatalf("expected media ingest to be called once, got %d", mediaSvc.calls)
+	}
+	if len(mediaSvc.inputs) != 1 {
+		t.Fatalf("expected one ingest input, got %d", len(mediaSvc.inputs))
+	}
+	if got := mediaSvc.inputs[0].OriginalExt; got != ".md" {
+		t.Fatalf("expected original ext .md, got %q", got)
+	}
+	if got := mediaSvc.inputs[0].Mime; got != "text/plain" {
+		t.Fatalf("expected sniffed mime text/plain, got %q", got)
+	}
+}
+
 func TestChannelInboundProcessorPersonalGroupNonOwnerIgnored(t *testing.T) {
 	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-member"}}
 	memberSvc := &fakeMemberService{isMember: true}
