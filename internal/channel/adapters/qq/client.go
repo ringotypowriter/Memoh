@@ -207,7 +207,13 @@ func (c *qqClient) doJSONOnce(ctx context.Context, method, url string, payload a
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("qq api request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf(
+			"qq api request failed: method=%s url=%s status=%d body=%s",
+			method,
+			url,
+			resp.StatusCode,
+			strings.TrimSpace(string(raw)),
+		)
 	}
 	if out == nil || len(raw) == 0 {
 		return nil
@@ -251,7 +257,9 @@ func (c *qqClient) sendText(ctx context.Context, target qqTarget, text string, r
 	case qqTargetChannel:
 		body := map[string]any{"content": text}
 		if strings.TrimSpace(replyTo) != "" {
-			body["msg_id"] = strings.TrimSpace(replyTo)
+			replyID := strings.TrimSpace(replyTo)
+			body["msg_id"] = replyID
+			body["message_reference"] = map[string]any{"message_id": replyID}
 		}
 		return c.doJSON(ctx, http.MethodPost, "/channels/"+target.ID+"/messages", body, &qqMessageResponse{})
 	default:
@@ -302,18 +310,17 @@ func (c *qqClient) sendInputHint(ctx context.Context, openID, replyTo string) er
 	return c.doJSON(ctx, http.MethodPost, "/v2/users/"+openID+"/messages", body, nil)
 }
 
-func (c *qqClient) uploadMedia(ctx context.Context, target qqTarget, fileType int, publicURL, rawBase64, fileName string) (string, error) {
+func (c *qqClient) uploadMedia(ctx context.Context, target qqTarget, fileType int, rawBase64, fileName string) (string, error) {
+	rawBase64 = strings.TrimSpace(rawBase64)
+	if rawBase64 == "" {
+		return "", errors.New("qq upload requires file_data")
+	}
 	body := map[string]any{
-		"file_type": fileType,
+		"file_type":    fileType,
+		"srv_send_msg": false,
 	}
-	if strings.TrimSpace(publicURL) != "" {
-		body["url"] = strings.TrimSpace(publicURL)
-	} else if strings.TrimSpace(rawBase64) != "" {
-		body["file_data"] = strings.TrimSpace(rawBase64)
-	} else {
-		return "", errors.New("qq upload requires url or file_data")
-	}
-	if strings.TrimSpace(fileName) != "" {
+	body["file_data"] = rawBase64
+	if fileType == qqMediaTypeFile && strings.TrimSpace(fileName) != "" {
 		body["file_name"] = strings.TrimSpace(fileName)
 	}
 

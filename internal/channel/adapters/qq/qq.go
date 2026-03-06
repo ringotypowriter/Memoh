@@ -12,6 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/memohai/memoh/internal/channel"
+	identitypkg "github.com/memohai/memoh/internal/channel/identities"
+	routepkg "github.com/memohai/memoh/internal/channel/route"
 	"github.com/memohai/memoh/internal/media"
 )
 
@@ -33,6 +35,16 @@ type sessionState struct {
 	IntentLevel int
 }
 
+type channelIdentityResolver interface {
+	GetByID(ctx context.Context, channelIdentityID string) (identitypkg.ChannelIdentity, error)
+	ListCanonicalChannelIdentities(ctx context.Context, channelIdentityID string) ([]identitypkg.ChannelIdentity, error)
+	ListUserChannelIdentities(ctx context.Context, userID string) ([]identitypkg.ChannelIdentity, error)
+}
+
+type routeResolver interface {
+	GetByID(ctx context.Context, routeID string) (routepkg.Route, error)
+}
+
 type QQAdapter struct {
 	logger     *slog.Logger
 	httpClient *http.Client
@@ -44,6 +56,8 @@ type QQAdapter struct {
 	clients  map[string]*qqClient
 	sessions map[string]sessionState
 	assets   assetOpener
+	identity channelIdentityResolver
+	routes   routeResolver
 }
 
 func NewQQAdapter(log *slog.Logger) *QQAdapter {
@@ -83,9 +97,10 @@ func (*QQAdapter) Descriptor() channel.Descriptor {
 			ChatTypes:      []string{"direct", "group", "channel"},
 		},
 		OutboundPolicy: channel.OutboundPolicy{
-			TextChunkLimit: defaultChunkLimit,
-			ChunkerMode:    channel.ChunkerModeMarkdown,
-			MediaOrder:     channel.OutboundOrderTextFirst,
+			TextChunkLimit:      defaultChunkLimit,
+			ChunkerMode:         channel.ChunkerModeMarkdown,
+			MediaOrder:          channel.OutboundOrderTextFirst,
+			InlineTextWithMedia: true,
 		},
 		ConfigSchema: channel.ConfigSchema{
 			Version: 1,
@@ -167,6 +182,18 @@ func (a *QQAdapter) SetAssetOpener(opener assetOpener) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.assets = opener
+}
+
+func (a *QQAdapter) SetChannelIdentityResolver(resolver channelIdentityResolver) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.identity = resolver
+}
+
+func (a *QQAdapter) SetRouteResolver(resolver routeResolver) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.routes = resolver
 }
 
 func (a *QQAdapter) ProcessingStarted(ctx context.Context, cfg channel.ChannelConfig, _ channel.InboundMessage, info channel.ProcessingStatusInfo) (channel.ProcessingStatusHandle, error) {

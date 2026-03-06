@@ -3,6 +3,7 @@ package qq
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -93,7 +94,9 @@ func TestQQSendImageAttachment(t *testing.T) {
 				t.Fatalf("decode upload body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"file_uuid": "file-uuid-1",
 				"file_info": "file-info-1",
+				"ttl":       60,
 			})
 		case "/v2/groups/group-openid/messages":
 			if err := json.NewDecoder(r.Body).Decode(&messageBody); err != nil {
@@ -107,6 +110,14 @@ func TestQQSendImageAttachment(t *testing.T) {
 	defer server.Close()
 
 	adapter := newTestQQAdapter(server)
+	adapter.SetAssetOpener(&trackingAssetOpener{
+		data: []byte("png-bytes"),
+		asset: media.Asset{
+			ContentHash: "hash-1",
+			BotID:       "bot-2",
+			Mime:        "image/png",
+		},
+	})
 	err := adapter.Send(context.Background(), channel.ChannelConfig{
 		ID:    "cfg-2",
 		BotID: "bot-2",
@@ -118,8 +129,9 @@ func TestQQSendImageAttachment(t *testing.T) {
 		Target: "group:group-openid",
 		Message: channel.Message{
 			Attachments: []channel.Attachment{{
-				Type: channel.AttachmentImage,
-				URL:  "https://example.com/image.png",
+				Type:        channel.AttachmentImage,
+				ContentHash: "hash-1",
+				Name:        "image.png",
 			}},
 			Reply: &channel.ReplyRef{MessageID: "source-msg"},
 		},
@@ -131,14 +143,100 @@ func TestQQSendImageAttachment(t *testing.T) {
 	if uploadBody["file_type"] != float64(qqMediaTypeImage) {
 		t.Fatalf("unexpected file_type: %#v", uploadBody["file_type"])
 	}
-	if uploadBody["url"] != "https://example.com/image.png" {
-		t.Fatalf("unexpected upload url: %#v", uploadBody["url"])
+	if uploadBody["file_data"] != base64.StdEncoding.EncodeToString([]byte("png-bytes")) {
+		t.Fatalf("unexpected file_data: %#v", uploadBody["file_data"])
+	}
+	if _, ok := uploadBody["file_name"]; ok {
+		t.Fatalf("unexpected file_name for image upload: %#v", uploadBody["file_name"])
 	}
 	if messageBody["msg_type"] != float64(7) {
 		t.Fatalf("unexpected msg_type: %#v", messageBody["msg_type"])
 	}
 	if messageBody["msg_id"] != "source-msg" {
 		t.Fatalf("unexpected msg_id: %#v", messageBody["msg_id"])
+	}
+	media, ok := messageBody["media"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected media payload: %#v", messageBody["media"])
+	}
+	if media["file_info"] != "file-info-1" {
+		t.Fatalf("unexpected media.file_info: %#v", media["file_info"])
+	}
+	if len(media) != 1 {
+		t.Fatalf("unexpected media payload size: %#v", media)
+	}
+}
+
+func TestQQSendImageAttachmentCaptionUsesMediaContent(t *testing.T) {
+	t.Parallel()
+
+	var uploadBody map[string]any
+	var messageBody map[string]any
+	var messageCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token-1",
+				"expires_in":   7200,
+			})
+		case "/v2/users/user-openid/files":
+			if err := json.NewDecoder(r.Body).Decode(&uploadBody); err != nil {
+				t.Fatalf("decode upload body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"file_uuid": "file-uuid-2",
+				"file_info": "file-info-2",
+				"ttl":       60,
+			})
+		case "/v2/users/user-openid/messages":
+			messageCalls++
+			if err := json.NewDecoder(r.Body).Decode(&messageBody); err != nil {
+				t.Fatalf("decode message body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m-2b"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-2b",
+		BotID: "bot-2b",
+		Credentials: map[string]any{
+			"appId":        "2049",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "c2c:user-openid",
+		Message: channel.Message{
+			Attachments: []channel.Attachment{{
+				Type:    channel.AttachmentImage,
+				Base64:  "data:image/png;base64,cG5nLWJ5dGVz",
+				Caption: "test.jpg from QQ",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send attachment with caption: %v", err)
+	}
+
+	if uploadBody["file_type"] != float64(qqMediaTypeImage) {
+		t.Fatalf("unexpected file_type: %#v", uploadBody["file_type"])
+	}
+	if uploadBody["file_data"] != "cG5nLWJ5dGVz" {
+		t.Fatalf("unexpected file_data: %#v", uploadBody["file_data"])
+	}
+	if messageCalls != 1 {
+		t.Fatalf("unexpected message calls: %d", messageCalls)
+	}
+	if messageBody["msg_type"] != float64(7) {
+		t.Fatalf("unexpected msg_type: %#v", messageBody["msg_type"])
+	}
+	if messageBody["content"] != "test.jpg from QQ" {
+		t.Fatalf("unexpected content: %#v", messageBody["content"])
 	}
 }
 
@@ -187,26 +285,10 @@ func TestQQProcessingStartedSendsInputHintForDirectMessages(t *testing.T) {
 	}
 }
 
-func TestQQSendChannelImageUsesPublicURL(t *testing.T) {
+func TestQQSendChannelImageIsUnsupported(t *testing.T) {
 	t.Parallel()
 
-	var messageBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/app/getAppAccessToken":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"access_token": "token-1",
-				"expires_in":   7200,
-			})
-		case "/channels/channel-1/messages":
-			if err := json.NewDecoder(r.Body).Decode(&messageBody); err != nil {
-				t.Fatalf("decode channel body: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m-4"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
 
 	adapter := newTestQQAdapter(server)
@@ -226,16 +308,234 @@ func TestQQSendChannelImageUsesPublicURL(t *testing.T) {
 			}},
 		},
 	})
-	if err != nil {
-		t.Fatalf("send channel image: %v", err)
+	if err == nil {
+		t.Fatal("expected channel image error")
 	}
-
-	if messageBody["content"] != "![](https://example.com/output.png)" {
-		t.Fatalf("unexpected channel content: %#v", messageBody["content"])
+	if !strings.Contains(err.Error(), "does not support image attachments") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestQQSendChannelImageFromStoredAssetRequiresPublicURL(t *testing.T) {
+func TestQQSendChannelReplyIncludesMessageReference(t *testing.T) {
+	t.Parallel()
+
+	var messageBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token-1",
+				"expires_in":   7200,
+			})
+		case "/channels/channel-1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&messageBody); err != nil {
+				t.Fatalf("decode channel body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m-6"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-5",
+		BotID: "bot-5",
+		Credentials: map[string]any{
+			"appId":        "16384",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "channel:channel-1",
+		Message: channel.Message{
+			Text:  "hello",
+			Reply: &channel.ReplyRef{MessageID: "source-msg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send channel reply: %v", err)
+	}
+
+	if messageBody["msg_id"] != "source-msg" {
+		t.Fatalf("unexpected msg_id: %#v", messageBody["msg_id"])
+	}
+	ref, ok := messageBody["message_reference"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected message_reference: %#v", messageBody["message_reference"])
+	}
+	if ref["message_id"] != "source-msg" {
+		t.Fatalf("unexpected message_reference.message_id: %#v", ref["message_id"])
+	}
+}
+
+func TestQQSendGroupFileUsesNativeUpload(t *testing.T) {
+	t.Parallel()
+
+	var uploadBody map[string]any
+	var messageBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token-1",
+				"expires_in":   7200,
+			})
+		case "/v2/groups/group-openid/files":
+			if err := json.NewDecoder(r.Body).Decode(&uploadBody); err != nil {
+				t.Fatalf("decode upload body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"file_uuid": "file-uuid-7",
+				"file_info": "file-info-7",
+				"ttl":       60,
+			})
+		case "/v2/groups/group-openid/messages":
+			if err := json.NewDecoder(r.Body).Decode(&messageBody); err != nil {
+				t.Fatalf("decode message body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m-7"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-6",
+		BotID: "bot-6",
+		Credentials: map[string]any{
+			"appId":        "32768",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "group:group-openid",
+		Message: channel.Message{
+			Attachments: []channel.Attachment{{
+				Type:   channel.AttachmentFile,
+				Base64: "JVBERi0xLjQ=",
+				Name:   "report.pdf",
+			}},
+			Reply: &channel.ReplyRef{MessageID: "source-msg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send group file: %v", err)
+	}
+
+	if uploadBody["file_type"] != float64(qqMediaTypeFile) {
+		t.Fatalf("unexpected file_type: %#v", uploadBody["file_type"])
+	}
+	if uploadBody["file_name"] != "report.pdf" {
+		t.Fatalf("unexpected file_name: %#v", uploadBody["file_name"])
+	}
+	if uploadBody["file_data"] != "JVBERi0xLjQ=" {
+		t.Fatalf("unexpected file_data: %#v", uploadBody["file_data"])
+	}
+	if messageBody["msg_type"] != float64(7) {
+		t.Fatalf("unexpected msg_type: %#v", messageBody["msg_type"])
+	}
+	if messageBody["msg_id"] != "source-msg" {
+		t.Fatalf("unexpected msg_id: %#v", messageBody["msg_id"])
+	}
+	media, ok := messageBody["media"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected media payload: %#v", messageBody["media"])
+	}
+	if media["file_info"] != "file-info-7" {
+		t.Fatalf("unexpected media.file_info: %#v", media["file_info"])
+	}
+}
+
+func TestQQSendChannelFileIsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-7",
+		BotID: "bot-7",
+		Credentials: map[string]any{
+			"appId":        "65536",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "channel:channel-1",
+		Message: channel.Message{
+			Attachments: []channel.Attachment{{
+				Type: channel.AttachmentFile,
+				URL:  "https://example.com/files/report.pdf",
+				Name: "report.pdf",
+			}},
+			Reply: &channel.ReplyRef{MessageID: "source-msg"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected channel file error")
+	}
+	if !strings.Contains(err.Error(), "does not support file attachments") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestQQSendImageWithLocalPathFailsBeforeAPI(t *testing.T) {
+	t.Parallel()
+
+	var tokenCalls int
+	var fileCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			tokenCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token-1",
+				"expires_in":   7200,
+			})
+		case "/v2/groups/group-openid/files":
+			fileCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"file_info": "unused"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-8",
+		BotID: "bot-8",
+		Credentials: map[string]any{
+			"appId":        "131072",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "group:group-openid",
+		Message: channel.Message{
+			Attachments: []channel.Attachment{{
+				Type: channel.AttachmentImage,
+				URL:  "/tmp/output.png",
+				Name: "output.png",
+			}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected local path error")
+	}
+	if !strings.Contains(err.Error(), "requires http(s) URL, base64, or content_hash") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tokenCalls != 0 {
+		t.Fatalf("unexpected token calls: %d", tokenCalls)
+	}
+	if fileCalls != 0 {
+		t.Fatalf("unexpected file upload calls: %d", fileCalls)
+	}
+}
+
+func TestQQSendChannelImageFromStoredAssetIsUnsupported(t *testing.T) {
 	t.Parallel()
 
 	var tokenCalls int
@@ -286,19 +586,95 @@ func TestQQSendChannelImageFromStoredAssetRequiresPublicURL(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Fatal("expected public URL error")
+		t.Fatal("expected channel image error")
 	}
-	if !strings.Contains(err.Error(), "requires a public URL") {
+	if !strings.Contains(err.Error(), "does not support image attachments") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if opener.called {
-		t.Fatal("expected stored asset opener to be skipped for channel images without public URL")
+		t.Fatal("expected stored asset opener to be skipped for channel images")
 	}
 	if tokenCalls != 0 {
 		t.Fatalf("unexpected token calls: %d", tokenCalls)
 	}
 	if messageCalls != 0 {
 		t.Fatalf("unexpected channel message calls: %d", messageCalls)
+	}
+}
+
+func TestQQSendImageAttachmentFromHTTPURLUsesFetchedBytes(t *testing.T) {
+	t.Parallel()
+
+	const imageBytes = "remote-image-bytes"
+
+	var uploadBody map[string]any
+	var messageBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token-1",
+				"expires_in":   7200,
+			})
+		case "/remote/test.jpg":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte(imageBytes))
+		case "/v2/groups/group-openid/files":
+			if err := json.NewDecoder(r.Body).Decode(&uploadBody); err != nil {
+				t.Fatalf("decode upload body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"file_uuid": "file-uuid-9",
+				"file_info": "file-info-9",
+				"ttl":       60,
+			})
+		case "/v2/groups/group-openid/messages":
+			if err := json.NewDecoder(r.Body).Decode(&messageBody); err != nil {
+				t.Fatalf("decode message body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m-9"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-9",
+		BotID: "bot-9",
+		Credentials: map[string]any{
+			"appId":        "262144",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "group:group-openid",
+		Message: channel.Message{
+			Attachments: []channel.Attachment{{
+				Type: channel.AttachmentImage,
+				URL:  server.URL + "/remote/test.jpg",
+				Name: "test.jpg",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send remote image attachment: %v", err)
+	}
+	if uploadBody["file_type"] != float64(qqMediaTypeImage) {
+		t.Fatalf("unexpected file_type: %#v", uploadBody["file_type"])
+	}
+	if uploadBody["file_data"] != base64.StdEncoding.EncodeToString([]byte(imageBytes)) {
+		t.Fatalf("unexpected file_data: %#v", uploadBody["file_data"])
+	}
+	if _, ok := uploadBody["url"]; ok {
+		t.Fatalf("unexpected qq native url upload payload: %#v", uploadBody["url"])
+	}
+	mediaPayload, ok := messageBody["media"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected media payload: %#v", messageBody["media"])
+	}
+	if mediaPayload["file_info"] != "file-info-9" {
+		t.Fatalf("unexpected media.file_info: %#v", mediaPayload["file_info"])
 	}
 }
 

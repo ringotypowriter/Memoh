@@ -23,10 +23,10 @@ func TestQQOutboundStreamFlushesBufferedTextOnFinal(t *testing.T) {
 	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventStatus, Status: channel.StreamStatusStarted}); err != nil {
 		t.Fatalf("push status: %v", err)
 	}
-	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "Hel"}); err != nil {
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "Hi "}); err != nil {
 		t.Fatalf("push delta1: %v", err)
 	}
-	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "lo"}); err != nil {
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "there"}); err != nil {
 		t.Fatalf("push delta2: %v", err)
 	}
 	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventFinal, Final: &channel.StreamFinalizePayload{}}); err != nil {
@@ -39,7 +39,7 @@ func TestQQOutboundStreamFlushesBufferedTextOnFinal(t *testing.T) {
 	if sent[0].Target != "c2c:user-openid" {
 		t.Fatalf("unexpected target: %s", sent[0].Target)
 	}
-	if sent[0].Message.PlainText() != "Hello" {
+	if sent[0].Message.PlainText() != "Hi there" {
 		t.Fatalf("unexpected text: %q", sent[0].Message.PlainText())
 	}
 }

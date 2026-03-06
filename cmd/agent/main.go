@@ -180,6 +180,7 @@ func runServe() {
 			provideRouteService,
 			provideMessageService,
 			provideMediaService,
+			qq.ProvideQQAdapter,
 
 			// channel infrastructure
 			local.NewRouteHub,
@@ -375,7 +376,7 @@ func provideChatResolver(log *slog.Logger, cfg config.Config, modelsService *mod
 // channel providers
 // ---------------------------------------------------------------------------
 
-func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService *media.Service) *channel.Registry {
+func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService *media.Service, qqAdapter channel.Adapter) *channel.Registry {
 	registry := channel.NewRegistry()
 
 	// Telegram
@@ -388,8 +389,6 @@ func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService 
 	discordAdapter.SetAssetOpener(mediaService)
 	registry.MustRegister(discordAdapter)
 
-	qqAdapter := qq.NewQQAdapter(log)
-	qqAdapter.SetAssetOpener(mediaService)
 	registry.MustRegister(qqAdapter)
 
 	registry.MustRegister(feishu.NewFeishuAdapter(log))

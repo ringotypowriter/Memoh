@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/memohai/memoh/internal/channel"
@@ -32,11 +34,12 @@ type qqTarget struct {
 	ID   string
 }
 
+var qqUUIDTargetPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 type attachmentUpload struct {
-	PublicURL string
-	Base64    string
-	FileName  string
-	Mime      string
+	Base64   string
+	FileName string
+	Mime     string
 }
 
 func (a *QQAdapter) Send(ctx context.Context, cfg channel.ChannelConfig, msg channel.OutboundMessage) error {
@@ -44,7 +47,11 @@ func (a *QQAdapter) Send(ctx context.Context, cfg channel.ChannelConfig, msg cha
 	if err != nil {
 		return err
 	}
-	target, err := parseTarget(msg.Target)
+	resolvedTarget, err := a.resolveTarget(ctx, msg.Target)
+	if err != nil {
+		return err
+	}
+	target, err := parseTarget(resolvedTarget)
 	if err != nil {
 		return err
 	}
@@ -78,6 +85,9 @@ func parseTarget(raw string) (qqTarget, error) {
 		if id == "" {
 			return qqTarget{}, errors.New("qq target c2c id is required")
 		}
+		if err := validateQQC2CTarget(id); err != nil {
+			return qqTarget{}, err
+		}
 		return qqTarget{Kind: qqTargetC2C, ID: id}, nil
 	case strings.HasPrefix(normalized, "group:"):
 		id := strings.TrimSpace(strings.TrimPrefix(normalized, "group:"))
@@ -96,13 +106,27 @@ func parseTarget(raw string) (qqTarget, error) {
 	}
 }
 
+func validateQQC2CTarget(id string) error {
+	if qqUUIDTargetPattern.MatchString(strings.TrimSpace(id)) {
+		return errors.New("qq c2c target must be user_openid, not an internal UUID; use c2c:<user_openid>")
+	}
+	return nil
+}
+
 func (a *QQAdapter) sendAttachment(ctx context.Context, cfg channel.ChannelConfig, client *qqClient, target qqTarget, replyTo string, att channel.Attachment) error {
-	if target.Kind == qqTargetChannel && (att.Type == channel.AttachmentImage || att.Type == channel.AttachmentGIF) {
-		imageRef, err := qqChannelImageReference(att)
-		if err != nil {
-			return err
+	if target.Kind == qqTargetChannel {
+		switch att.Type {
+		case channel.AttachmentImage, channel.AttachmentGIF:
+			return errors.New("qq channel does not support image attachments")
+		case channel.AttachmentVideo:
+			return errors.New("qq channel does not support video attachments")
+		case channel.AttachmentVoice, channel.AttachmentAudio:
+			return errors.New("qq channel does not support voice attachments")
+		case channel.AttachmentFile, "":
+			return errors.New("qq channel does not support file attachments")
+		default:
+			return fmt.Errorf("unsupported qq attachment type: %s", att.Type)
 		}
-		return client.sendText(ctx, target, "![]("+imageRef+")", replyTo, false)
 	}
 
 	upload, err := a.prepareAttachmentUpload(ctx, cfg.BotID, att)
@@ -112,53 +136,40 @@ func (a *QQAdapter) sendAttachment(ctx context.Context, cfg channel.ChannelConfi
 
 	switch att.Type {
 	case channel.AttachmentImage, channel.AttachmentGIF:
-		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeImage, upload.PublicURL, upload.Base64, upload.FileName)
+		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeImage, upload.Base64, "")
 		if err != nil {
 			return err
 		}
-		return client.sendMedia(ctx, target, fileInfo, replyTo, "")
+		return client.sendMedia(ctx, target, fileInfo, replyTo, att.Caption)
 	case channel.AttachmentVideo:
-		if target.Kind == qqTargetChannel {
-			return errors.New("qq channel does not support video attachments")
-		}
-		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeVideo, upload.PublicURL, upload.Base64, upload.FileName)
+		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeVideo, upload.Base64, "")
 		if err != nil {
 			return err
 		}
-		return client.sendMedia(ctx, target, fileInfo, replyTo, "")
+		return client.sendMedia(ctx, target, fileInfo, replyTo, att.Caption)
 	case channel.AttachmentVoice, channel.AttachmentAudio:
-		if target.Kind == qqTargetChannel {
-			return errors.New("qq channel does not support voice attachments")
-		}
 		if !supportsQQVoiceUpload(att, upload.FileName) {
 			return errors.New("qq voice attachments require SILK/WAV/MP3/AMR input")
 		}
-		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeVoice, upload.PublicURL, upload.Base64, upload.FileName)
+		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeVoice, upload.Base64, "")
 		if err != nil {
 			return err
 		}
-		return client.sendMedia(ctx, target, fileInfo, replyTo, "")
+		return client.sendMedia(ctx, target, fileInfo, replyTo, att.Caption)
 	case channel.AttachmentFile, "":
-		if target.Kind == qqTargetChannel {
-			return errors.New("qq channel does not support file attachments")
-		}
-		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeFile, upload.PublicURL, upload.Base64, upload.FileName)
+		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeFile, upload.Base64, upload.FileName)
 		if err != nil {
 			return err
 		}
-		return client.sendMedia(ctx, target, fileInfo, replyTo, "")
+		return client.sendMedia(ctx, target, fileInfo, replyTo, att.Caption)
 	default:
 		return fmt.Errorf("unsupported qq attachment type: %s", att.Type)
 	}
 }
 
 func (a *QQAdapter) prepareAttachmentUpload(ctx context.Context, fallbackBotID string, att channel.Attachment) (attachmentUpload, error) {
-	if url := strings.TrimSpace(att.URL); strings.HasPrefix(strings.ToLower(url), "http://") || strings.HasPrefix(strings.ToLower(url), "https://") {
-		return attachmentUpload{
-			PublicURL: url,
-			FileName:  deriveAttachmentName(att),
-			Mime:      strings.TrimSpace(att.Mime),
-		}, nil
+	if remoteURL := strings.TrimSpace(att.URL); strings.HasPrefix(strings.ToLower(remoteURL), "http://") || strings.HasPrefix(strings.ToLower(remoteURL), "https://") {
+		return a.prepareRemoteAttachmentUpload(ctx, att, remoteURL)
 	}
 
 	if rawBase64 := extractRawBase64(att); rawBase64 != "" {
@@ -171,7 +182,7 @@ func (a *QQAdapter) prepareAttachmentUpload(ctx context.Context, fallbackBotID s
 
 	contentHash := strings.TrimSpace(att.ContentHash)
 	if contentHash == "" || a.assets == nil {
-		return attachmentUpload{}, errors.New("qq attachment requires public URL, base64, or content_hash")
+		return attachmentUpload{}, errors.New("qq attachment requires http(s) URL, base64, or content_hash")
 	}
 
 	botID := strings.TrimSpace(fallbackBotID)
@@ -206,18 +217,62 @@ func (a *QQAdapter) prepareAttachmentUpload(ctx context.Context, fallbackBotID s
 	}, nil
 }
 
-func extractRawBase64(att channel.Attachment) string {
-	for _, candidate := range []string{strings.TrimSpace(att.Base64), strings.TrimSpace(att.URL)} {
-		if candidate == "" {
-			continue
+func (a *QQAdapter) prepareRemoteAttachmentUpload(ctx context.Context, att channel.Attachment, remoteURL string) (attachmentUpload, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
+	if err != nil {
+		return attachmentUpload{}, err
+	}
+	resp, err := a.httpClient.Do(req)
+	if err != nil {
+		return attachmentUpload{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return attachmentUpload{}, fmt.Errorf("qq attachment fetch failed: status=%d", resp.StatusCode)
+	}
+
+	data, err := media.ReadAllWithLimit(resp.Body, media.MaxAssetBytes)
+	if err != nil {
+		return attachmentUpload{}, err
+	}
+
+	mimeType := strings.TrimSpace(att.Mime)
+	if mimeType == "" {
+		mimeType = strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if idx := strings.Index(mimeType, ";"); idx >= 0 {
+			mimeType = strings.TrimSpace(mimeType[:idx])
 		}
+	}
+
+	fileName := deriveAttachmentName(att)
+	if fileName == "" {
+		fileName = deriveFileNameFromMime(mimeType, att.Type)
+	}
+
+	return attachmentUpload{
+		Base64:   base64.StdEncoding.EncodeToString(data),
+		FileName: fileName,
+		Mime:     mimeType,
+	}, nil
+}
+
+func extractRawBase64(att channel.Attachment) string {
+	if candidate := strings.TrimSpace(att.Base64); candidate != "" {
 		if strings.HasPrefix(strings.ToLower(candidate), "data:") {
 			if idx := strings.Index(candidate, ","); idx >= 0 && idx < len(candidate)-1 {
 				return candidate[idx+1:]
 			}
-			continue
+			return ""
 		}
 		return candidate
+	}
+
+	candidate := strings.TrimSpace(att.URL)
+	if strings.HasPrefix(strings.ToLower(candidate), "data:") {
+		if idx := strings.Index(candidate, ","); idx >= 0 && idx < len(candidate)-1 {
+			return candidate[idx+1:]
+		}
 	}
 	return ""
 }
@@ -291,11 +346,4 @@ func supportsQQVoiceUpload(att channel.Attachment, fileName string) bool {
 	default:
 		return false
 	}
-}
-
-func qqChannelImageReference(att channel.Attachment) (string, error) {
-	if ref := strings.TrimSpace(att.URL); strings.HasPrefix(strings.ToLower(ref), "http://") || strings.HasPrefix(strings.ToLower(ref), "https://") {
-		return ref, nil
-	}
-	return "", errors.New("qq channel image delivery requires a public URL")
 }
