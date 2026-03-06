@@ -27,6 +27,7 @@ import (
 	"github.com/memohai/memoh/internal/channel/adapters/discord"
 	"github.com/memohai/memoh/internal/channel/adapters/feishu"
 	"github.com/memohai/memoh/internal/channel/adapters/local"
+	"github.com/memohai/memoh/internal/channel/adapters/qq"
 	"github.com/memohai/memoh/internal/channel/adapters/telegram"
 	"github.com/memohai/memoh/internal/channel/identities"
 	"github.com/memohai/memoh/internal/channel/inbound"
@@ -383,6 +384,10 @@ func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService 
 	discordAdapter := discord.NewDiscordAdapter(log)
 	discordAdapter.SetAssetOpener(mediaService)
 	registry.MustRegister(discordAdapter)
+
+	qqAdapter := qq.NewQQAdapter(log)
+	qqAdapter.SetAssetOpener(mediaService)
+	registry.MustRegister(qqAdapter)
 
 	registry.MustRegister(feishu.NewFeishuAdapter(log))
 	registry.MustRegister(local.NewCLIAdapter(hub))

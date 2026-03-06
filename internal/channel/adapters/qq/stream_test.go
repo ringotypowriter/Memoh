@@ -1,0 +1,99 @@
+package qq
+
+import (
+	"context"
+	"testing"
+
+	"github.com/memohai/memoh/internal/channel"
+)
+
+func TestQQOutboundStreamFlushesBufferedTextOnFinal(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "c2c:user-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventStatus, Status: channel.StreamStatusStarted}); err != nil {
+		t.Fatalf("push status: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "Hel"}); err != nil {
+		t.Fatalf("push delta1: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "lo"}); err != nil {
+		t.Fatalf("push delta2: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventFinal, Final: &channel.StreamFinalizePayload{}}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send, got %d", len(sent))
+	}
+	if sent[0].Target != "c2c:user-openid" {
+		t.Fatalf("unexpected target: %s", sent[0].Target)
+	}
+	if sent[0].Message.PlainText() != "Hello" {
+		t.Fatalf("unexpected text: %q", sent[0].Message.PlainText())
+	}
+}
+
+func TestQQOutboundStreamFinalUsesExplicitMessageAndBufferedAttachments(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{{Type: channel.AttachmentImage, URL: "https://example.com/a.png"}},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{Message: channel.Message{
+			Text: "done",
+		}},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send, got %d", len(sent))
+	}
+	if sent[0].Message.PlainText() != "done" {
+		t.Fatalf("unexpected text: %q", sent[0].Message.PlainText())
+	}
+	if len(sent[0].Message.Attachments) != 1 {
+		t.Fatalf("unexpected attachments: %d", len(sent[0].Message.Attachments))
+	}
+}
+
+func TestQQOutboundStreamRejectsAfterClose(t *testing.T) {
+	t.Parallel()
+
+	stream := &qqOutboundStream{}
+	if err := stream.Close(context.Background()); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err := stream.Push(context.Background(), channel.StreamEvent{
+		Type:  channel.StreamEventDelta,
+		Delta: "x",
+	}); err == nil {
+		t.Fatal("expected closed error")
+	}
+}
