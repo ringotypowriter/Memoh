@@ -132,37 +132,38 @@ func (a *QQAdapter) runReceiver(ctx context.Context, cfg channel.ChannelConfig, 
 	backoffs := []time.Duration{time.Second, 2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second}
 	attempt := 0
 	for ctx.Err() == nil {
-		err := a.serveConnection(ctx, cfg, parsed, handler)
+		healthySession, err := a.serveConnection(ctx, cfg, parsed, handler)
 		if err == nil || ctx.Err() != nil {
 			return
 		}
 		if a.logger != nil {
 			a.logger.Warn("qq receiver reconnect", slog.String("config_id", cfg.ID), slog.Any("error", err))
 		}
-		delay := backoffs[min(attempt, len(backoffs)-1)]
-		attempt++
+		delay, nextAttempt := nextReconnectDelay(backoffs, attempt, healthySession)
+		attempt = nextAttempt
 		if !sleepContext(ctx, delay) {
 			return
 		}
 	}
 }
 
-func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConfig, parsed Config, handler channel.InboundHandler) error {
+func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConfig, parsed Config, handler channel.InboundHandler) (bool, error) {
 	client := a.getOrCreateClient(cfg, parsed)
 	gatewayURL, err := client.gatewayURL(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	conn, _, err := a.dialer.DialContext(ctx, gatewayURL, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 	writer := &gatewayWriter{conn: conn}
 
 	session := a.loadSession(cfg.ID)
+	healthySession := false
 
 	done := make(chan struct{})
 	go func() {
@@ -192,16 +193,16 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 				case 4006, 4007, 4009:
 					a.clearSession(cfg.ID)
 				case 4914, 4915:
-					return nil
+					return healthySession, nil
 				}
 			}
-			return err
+			return healthySession, err
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(defaultReadTimeout))
 
 		var payload wsPayload
 		if err := json.Unmarshal(data, &payload); err != nil {
-			return fmt.Errorf("qq websocket payload decode: %w", err)
+			return healthySession, fmt.Errorf("qq websocket payload decode: %w", err)
 		}
 		if payload.S > 0 {
 			session.LastSeq = payload.S
@@ -211,7 +212,7 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 		switch payload.Op {
 		case 10:
 			if err := a.handleHello(ctx, writer, client, &session, payload.D); err != nil {
-				return err
+				return healthySession, err
 			}
 			if heartbeat.cancel != nil {
 				heartbeat.cancel()
@@ -219,14 +220,16 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 			interval := parseHeartbeatInterval(payload.D)
 			heartbeat = a.startHeartbeat(ctx, writer, interval, &session)
 		case 0:
-			if err := a.handleDispatch(ctx, cfg, handler, payload.T, payload.D, &session); err != nil {
-				return err
+			dispatchHealthy, err := a.handleDispatch(ctx, cfg, handler, payload.T, payload.D, &session)
+			if err != nil {
+				return healthySession, err
 			}
+			healthySession = healthySession || dispatchHealthy
 		case 7:
-			return errors.New("qq gateway requested reconnect")
+			return healthySession, errors.New("qq gateway requested reconnect")
 		case 9:
 			a.adjustSessionAfterInvalid(cfg.ID, &session)
-			return errors.New("qq invalid session")
+			return healthySession, errors.New("qq invalid session")
 		case 11:
 			continue
 		}
@@ -264,44 +267,44 @@ func (a *QQAdapter) handleHello(ctx context.Context, writer *gatewayWriter, clie
 	})
 }
 
-func (a *QQAdapter) handleDispatch(ctx context.Context, cfg channel.ChannelConfig, handler channel.InboundHandler, eventType string, raw json.RawMessage, session *sessionState) error {
+func (a *QQAdapter) handleDispatch(ctx context.Context, cfg channel.ChannelConfig, handler channel.InboundHandler, eventType string, raw json.RawMessage, session *sessionState) (bool, error) {
 	switch eventType {
 	case "READY":
 		var ready struct {
 			SessionID string `json:"session_id"`
 		}
 		if err := json.Unmarshal(raw, &ready); err != nil {
-			return err
+			return false, err
 		}
 		session.SessionID = strings.TrimSpace(ready.SessionID)
 		a.saveSession(cfg.ID, *session)
-		return nil
+		return true, nil
 	case "RESUMED":
 		a.saveSession(cfg.ID, *session)
-		return nil
+		return true, nil
 	case "C2C_MESSAGE_CREATE":
 		var event C2CMessageEvent
 		if err := json.Unmarshal(raw, &event); err != nil {
-			return err
+			return false, err
 		}
 		a.dispatchInbound(ctx, cfg, handler, InboundEvent{Type: eventType, C2CMessage: &event})
-		return nil
+		return false, nil
 	case "GROUP_AT_MESSAGE_CREATE":
 		var event GroupMessageEvent
 		if err := json.Unmarshal(raw, &event); err != nil {
-			return err
+			return false, err
 		}
 		a.dispatchInbound(ctx, cfg, handler, InboundEvent{Type: eventType, GroupMessage: &event})
-		return nil
+		return false, nil
 	case "AT_MESSAGE_CREATE":
 		var event GuildMessageEvent
 		if err := json.Unmarshal(raw, &event); err != nil {
-			return err
+			return false, err
 		}
 		a.dispatchInbound(ctx, cfg, handler, InboundEvent{Type: eventType, GuildMessage: &event})
-		return nil
+		return false, nil
 	default:
-		return nil
+		return false, nil
 	}
 }
 
@@ -571,6 +574,17 @@ func sleepContext(ctx context.Context, delay time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+func nextReconnectDelay(backoffs []time.Duration, attempt int, healthySession bool) (time.Duration, int) {
+	if len(backoffs) == 0 {
+		return 0, attempt
+	}
+	if healthySession {
+		attempt = 0
+	}
+	delay := backoffs[min(attempt, len(backoffs)-1)]
+	return delay, attempt + 1
 }
 
 func min(a, b int) int {

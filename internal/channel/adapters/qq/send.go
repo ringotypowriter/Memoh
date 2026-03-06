@@ -97,6 +97,14 @@ func parseTarget(raw string) (qqTarget, error) {
 }
 
 func (a *QQAdapter) sendAttachment(ctx context.Context, cfg channel.ChannelConfig, client *qqClient, target qqTarget, replyTo string, att channel.Attachment) error {
+	if target.Kind == qqTargetChannel && (att.Type == channel.AttachmentImage || att.Type == channel.AttachmentGIF) {
+		imageRef, err := qqChannelImageReference(att)
+		if err != nil {
+			return err
+		}
+		return client.sendText(ctx, target, "![]("+imageRef+")", replyTo, false)
+	}
+
 	upload, err := a.prepareAttachmentUpload(ctx, cfg.BotID, att)
 	if err != nil {
 		return err
@@ -104,13 +112,6 @@ func (a *QQAdapter) sendAttachment(ctx context.Context, cfg channel.ChannelConfi
 
 	switch att.Type {
 	case channel.AttachmentImage, channel.AttachmentGIF:
-		if target.Kind == qqTargetChannel {
-			imageRef, err := qqChannelImageReference(att, upload)
-			if err != nil {
-				return err
-			}
-			return client.sendText(ctx, target, "![]("+imageRef+")", replyTo, false)
-		}
 		fileInfo, err := client.uploadMedia(ctx, target, qqMediaTypeImage, upload.PublicURL, upload.Base64, upload.FileName)
 		if err != nil {
 			return err
@@ -292,31 +293,9 @@ func supportsQQVoiceUpload(att channel.Attachment, fileName string) bool {
 	}
 }
 
-func qqChannelImageReference(att channel.Attachment, upload attachmentUpload) (string, error) {
-	if ref := strings.TrimSpace(upload.PublicURL); ref != "" {
+func qqChannelImageReference(att channel.Attachment) (string, error) {
+	if ref := strings.TrimSpace(att.URL); strings.HasPrefix(strings.ToLower(ref), "http://") || strings.HasPrefix(strings.ToLower(ref), "https://") {
 		return ref, nil
 	}
-
-	rawBase64 := strings.TrimSpace(upload.Base64)
-	if rawBase64 == "" {
-		return "", errors.New("qq channel image delivery requires a public URL or image data")
-	}
-
-	mime := strings.TrimSpace(upload.Mime)
-	if mime == "" {
-		mime = strings.TrimSpace(att.Mime)
-	}
-	if mime == "" {
-		switch att.Type {
-		case channel.AttachmentGIF:
-			mime = "image/gif"
-		default:
-			mime = "image/png"
-		}
-	}
-	if !strings.HasPrefix(strings.ToLower(mime), "image/") {
-		return "", errors.New("qq channel image delivery requires image mime data")
-	}
-
-	return "data:" + mime + ";base64," + rawBase64, nil
+	return "", errors.New("qq channel image delivery requires a public URL")
 }

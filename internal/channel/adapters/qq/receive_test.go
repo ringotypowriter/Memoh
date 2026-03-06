@@ -217,3 +217,45 @@ func TestStartHeartbeatCancelStopsSessionLoop(t *testing.T) {
 		t.Fatal("heartbeat did not stop after session cancel")
 	}
 }
+
+func TestHandleDispatchMarksHealthySessionForReadyAndResumed(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewQQAdapter(nil)
+	cfg := channel.ChannelConfig{ID: "cfg-healthy", BotID: "bot-healthy"}
+
+	session := sessionState{}
+	healthy, err := adapter.handleDispatch(context.Background(), cfg, func(context.Context, channel.ChannelConfig, channel.InboundMessage) error {
+		return nil
+	}, "READY", []byte(`{"session_id":"session-1"}`), &session)
+	if err != nil {
+		t.Fatalf("handle ready: %v", err)
+	}
+	if !healthy {
+		t.Fatal("expected READY to mark session healthy")
+	}
+
+	healthy, err = adapter.handleDispatch(context.Background(), cfg, func(context.Context, channel.ChannelConfig, channel.InboundMessage) error {
+		return nil
+	}, "RESUMED", []byte(`{}`), &session)
+	if err != nil {
+		t.Fatalf("handle resumed: %v", err)
+	}
+	if !healthy {
+		t.Fatal("expected RESUMED to mark session healthy")
+	}
+}
+
+func TestNextReconnectDelayResetsAfterHealthySession(t *testing.T) {
+	t.Parallel()
+
+	backoffs := []time.Duration{time.Second, 2 * time.Second, 5 * time.Second}
+	delay, attempt := nextReconnectDelay(backoffs, 2, true)
+
+	if delay != time.Second {
+		t.Fatalf("unexpected delay: %v", delay)
+	}
+	if attempt != 1 {
+		t.Fatalf("unexpected next attempt: %d", attempt)
+	}
+}

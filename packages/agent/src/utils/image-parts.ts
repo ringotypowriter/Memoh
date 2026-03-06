@@ -67,6 +67,15 @@ const createInlineDataImagePart = (payload: string, mediaType?: string): ImagePa
   return createImagePart(payload, mediaType)
 }
 
+const createPublicURLImagePart = (payload: string, mediaType?: string): ImagePart => {
+  try {
+    return createImagePart(new URL(payload), mediaType)
+  }
+  catch {
+    return createImagePart(payload, mediaType)
+  }
+}
+
 export const createBinaryImagePart = (bytes: Uint8Array, mediaType?: string): ImagePart => {
   return createImagePart(bytes, mediaType)
 }
@@ -81,7 +90,7 @@ export const createImagePartFromAttachment = (
   const payload = attachment.payload.trim()
   switch (attachment.transport) {
     case 'public_url':
-      return createImagePart(new URL(payload), attachment.mime)
+      return createPublicURLImagePart(payload, attachment.mime)
     case 'inline_data_url':
       return createInlineDataImagePart(payload, attachment.mime)
   }

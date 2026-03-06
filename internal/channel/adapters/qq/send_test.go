@@ -3,11 +3,11 @@ package qq
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/memohai/memoh/internal/channel"
@@ -187,7 +187,7 @@ func TestQQProcessingStartedSendsInputHintForDirectMessages(t *testing.T) {
 	}
 }
 
-func TestQQSendChannelImageFromStoredAsset(t *testing.T) {
+func TestQQSendChannelImageUsesPublicURL(t *testing.T) {
 	t.Parallel()
 
 	var messageBody map[string]any
@@ -210,14 +210,63 @@ func TestQQSendChannelImageFromStoredAsset(t *testing.T) {
 	defer server.Close()
 
 	adapter := newTestQQAdapter(server)
-	adapter.SetAssetOpener(testAssetOpener{
+	err := adapter.Send(context.Background(), channel.ChannelConfig{
+		ID:    "cfg-4",
+		BotID: "bot-4",
+		Credentials: map[string]any{
+			"appId":        "8192",
+			"clientSecret": "secret",
+		},
+	}, channel.OutboundMessage{
+		Target: "channel:channel-1",
+		Message: channel.Message{
+			Attachments: []channel.Attachment{{
+				Type: channel.AttachmentImage,
+				URL:  "https://example.com/output.png",
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("send channel image: %v", err)
+	}
+
+	if messageBody["content"] != "![](https://example.com/output.png)" {
+		t.Fatalf("unexpected channel content: %#v", messageBody["content"])
+	}
+}
+
+func TestQQSendChannelImageFromStoredAssetRequiresPublicURL(t *testing.T) {
+	t.Parallel()
+
+	var tokenCalls int
+	var messageCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/getAppAccessToken":
+			tokenCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "token-1",
+				"expires_in":   7200,
+			})
+		case "/channels/channel-1/messages":
+			messageCalls++
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "m-5"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adapter := newTestQQAdapter(server)
+	opener := &trackingAssetOpener{
 		data: []byte("png-bytes"),
 		asset: media.Asset{
 			ContentHash: "hash-1",
 			BotID:       "bot-4",
 			Mime:        "image/png",
 		},
-	})
+	}
+	adapter.SetAssetOpener(opener)
 
 	err := adapter.Send(context.Background(), channel.ChannelConfig{
 		ID:    "cfg-4",
@@ -236,22 +285,31 @@ func TestQQSendChannelImageFromStoredAsset(t *testing.T) {
 			}},
 		},
 	})
-	if err != nil {
-		t.Fatalf("send stored channel image: %v", err)
+	if err == nil {
+		t.Fatal("expected public URL error")
 	}
-
-	want := "![](data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("png-bytes")) + ")"
-	if messageBody["content"] != want {
-		t.Fatalf("unexpected channel content: %#v", messageBody["content"])
+	if !strings.Contains(err.Error(), "requires a public URL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if opener.called {
+		t.Fatal("expected stored asset opener to be skipped for channel images without public URL")
+	}
+	if tokenCalls != 0 {
+		t.Fatalf("unexpected token calls: %d", tokenCalls)
+	}
+	if messageCalls != 0 {
+		t.Fatalf("unexpected channel message calls: %d", messageCalls)
 	}
 }
 
-type testAssetOpener struct {
-	data  []byte
-	asset media.Asset
+type trackingAssetOpener struct {
+	called bool
+	data   []byte
+	asset  media.Asset
 }
 
-func (t testAssetOpener) Open(context.Context, string, string) (io.ReadCloser, media.Asset, error) {
+func (t *trackingAssetOpener) Open(context.Context, string, string) (io.ReadCloser, media.Asset, error) {
+	t.called = true
 	return io.NopCloser(bytes.NewReader(t.data)), t.asset, nil
 }
 

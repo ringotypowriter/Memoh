@@ -26,6 +26,18 @@ describe('createImagePartFromAttachment', () => {
     expect(String(part?.image)).toBe('https://example.com/demo.png')
   })
 
+  it('falls back to string payloads for malformed public URLs', () => {
+    const part = createImagePartFromAttachment({
+      type: 'image',
+      transport: 'public_url',
+      payload: 'https://',
+      mime: 'image/png',
+    })
+
+    expect(part?.image).toBe('https://')
+    expect(part?.mediaType).toBe('image/png')
+  })
+
   it('keeps inline payload strings when they are not data URLs', () => {
     const part = createImagePartFromAttachment({
       type: 'image',
