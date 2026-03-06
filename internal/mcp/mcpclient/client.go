@@ -210,7 +210,7 @@ func (c *Client) ReadRaw(ctx context.Context, path string) (io.ReadCloser, error
 	if err != nil {
 		return nil, mapError(err)
 	}
-	return &streamReader{stream: stream}, nil
+	return newStreamReader(stream)
 }
 
 // WriteRaw writes raw bytes to a file in the container.
@@ -264,14 +264,39 @@ type streamReader struct {
 	off    int
 }
 
-func (r *streamReader) Read(p []byte) (int, error) {
+func newStreamReader(stream pb.ContainerService_ReadRawClient) (io.ReadCloser, error) {
+	first, err := stream.Recv()
+	switch {
+	case errors.Is(err, io.EOF):
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	case err != nil:
+		return nil, mapError(err)
+	default:
+		return &streamReader{stream: stream, buf: first.GetData()}, nil
+	}
+}
+
+func (r *streamReader) fill() error {
 	for r.off >= len(r.buf) {
 		msg, err := r.stream.Recv()
 		if err != nil {
-			return 0, err
+			if errors.Is(err, io.EOF) {
+				return io.EOF
+			}
+			return mapError(err)
 		}
 		r.buf = msg.GetData()
 		r.off = 0
+	}
+	return nil
+}
+
+func (r *streamReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if err := r.fill(); err != nil {
+		return 0, err
 	}
 	n := copy(p, r.buf[r.off:])
 	r.off += n
