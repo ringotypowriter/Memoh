@@ -212,6 +212,7 @@ function addChannel(type: string) {
 
 function channelIcon(type: string): string {
   const icons: Record<string, string> = {
+    qq: 'QQ',
     telegram: 'TG',
     feishu: '飞',
   }
@@ -220,6 +221,7 @@ function channelIcon(type: string): string {
 
 function channelBadgeClass(type: string): string {
   const classes: Record<string, string> = {
+    qq: 'bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300',
     telegram: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
     feishu: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300',
   }
