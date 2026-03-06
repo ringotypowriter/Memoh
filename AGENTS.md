@@ -100,13 +100,14 @@ Memoh/
 │   ├── storage/                #   Storage provider interface (filesystem, container FS)
 │   ├── subagent/               #   Sub-agent management (CRUD)
 │   └── version/                #   Build-time version information
-├── agent/                      # Agent Gateway service (Bun/Elysia)
-│   └── src/
-│       ├── index.ts            #   Elysia server entry point
-│       ├── modules/            #   Route modules (chat, stream, trigger)
-│       ├── middlewares/         #   CORS, error handling, bearer auth
-│       ├── utils/              #   SSE utilities
-│       └── models.ts           #   Zod request schemas
+├── apps/                       # Application services
+│   └── agent/                  #   Agent Gateway (Bun/Elysia)
+│       └── src/
+│           ├── index.ts        #     Elysia server entry point
+│           ├── modules/        #     Route modules (chat, stream, trigger)
+│           ├── middlewares/     #     CORS, error handling, bearer auth
+│           ├── utils/          #     SSE utilities
+│           └── models.ts       #     Zod request schemas
 ├── packages/                   # TypeScript monorepo
 │   ├── agent/                  #   Core agent library (@memoh/agent)
 │   │   └── src/
@@ -213,7 +214,7 @@ Migrations live in `db/migrations/` and follow a dual-update convention:
 ### Agent Development
 
 - The core agent logic lives in `packages/agent/` (`@memoh/agent`), providing reusable agent streaming, tool execution, and prompt management.
-- The Agent Gateway (`agent/`) is a thin Elysia HTTP service that uses `@memoh/agent` for processing.
+- The Agent Gateway (`apps/agent/`) is a thin Elysia HTTP service that uses `@memoh/agent` for processing.
 - AI model providers (Anthropic, OpenAI, Google) are integrated via Vercel AI SDK.
 - Tools (MCP, web search, subagent, skill) are defined in `packages/agent/src/tools/`.
 - Prompt templates (system, heartbeat, schedule, subagent) are in `packages/agent/src/prompts/`.

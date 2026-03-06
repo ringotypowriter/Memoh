@@ -6,7 +6,7 @@ import { loadConfig, getBaseUrl as getBaseUrlByConfig } from '@memoh/config'
 import { AgentAuthContext, AuthFetcher } from '@memoh/agent'
 
 const configuredPath = process.env.MEMOH_CONFIG_PATH?.trim() || process.env.CONFIG_PATH?.trim()
-const configPath = configuredPath && configuredPath.length > 0 ? configuredPath : '../config.toml'
+const configPath = configuredPath && configuredPath.length > 0 ? configuredPath : '../../config.toml'
 const config = loadConfig(configPath)
 
 export const getBaseUrl = () => {
