@@ -210,7 +210,7 @@ func TestAdjustSessionAfterInvalidKeepsIntentLevel(t *testing.T) {
 func TestStartHeartbeatCancelStopsSessionLoop(t *testing.T) {
 	t.Parallel()
 
-	heartbeat := startHeartbeat(context.Background(), &gatewayWriter{}, time.Hour, &sessionState{})
+	heartbeat := startHeartbeat(context.Background(), &gatewayWriter{}, time.Hour, func() int { return 0 })
 	heartbeat.cancel()
 
 	select {

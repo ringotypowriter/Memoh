@@ -7,6 +7,7 @@ type NativeImageAttachment = GatewayInputAttachment & {
 }
 
 type ImagePartPayload = string | Uint8Array | URL
+const strictBase64Pattern = /^[A-Za-z0-9+/]*={0,2}$/
 
 const normalizeMediaType = (value?: string): string | undefined => {
   const mediaType = typeof value === 'string' ? value.trim() : ''
@@ -19,6 +20,39 @@ const createImagePart = (image: ImagePartPayload, mediaType?: string): ImagePart
     return { type: 'image', image }
   }
   return { type: 'image', image, mediaType: normalizedMediaType }
+}
+
+const decodeBase64Strict = (value: string): Buffer | null => {
+  const normalized = value.replace(/\s+/g, '')
+  if (normalized === '' || !strictBase64Pattern.test(normalized)) {
+    return null
+  }
+
+  const firstPadding = normalized.indexOf('=')
+  if (firstPadding >= 0) {
+    if (/[A-Za-z0-9+/]/.test(normalized.slice(firstPadding))) {
+      return null
+    }
+    if (normalized.length-firstPadding > 2 || normalized.length % 4 !== 0) {
+      return null
+    }
+  }
+  else if (normalized.length % 4 === 1) {
+    return null
+  }
+
+  const padded = firstPadding >= 0
+    ? normalized
+    : normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+
+  const decoded = Buffer.from(padded, 'base64')
+  const canonical = decoded.toString('base64').replace(/=+$/g, '')
+  const input = normalized.replace(/=+$/g, '')
+  if (canonical !== input) {
+    return null
+  }
+
+  return decoded
 }
 
 const parseDataUrl = (payload: string): { bytes: Uint8Array; mediaType?: string } | null => {
@@ -39,7 +73,11 @@ const parseDataUrl = (payload: string): { bytes: Uint8Array; mediaType?: string 
   const isBase64 = segments.some((segment) => segment.toLowerCase() === 'base64')
   let buffer: Buffer
   if (isBase64) {
-    buffer = Buffer.from(body, 'base64')
+    const decoded = decodeBase64Strict(body)
+    if (decoded == null) {
+      return null
+    }
+    buffer = decoded
   }
   else {
     try {

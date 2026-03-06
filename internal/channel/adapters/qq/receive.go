@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -166,6 +167,8 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 	writer := &gatewayWriter{conn: conn}
 
 	session := a.loadSession(cfg.ID)
+	var heartbeatSeq atomic.Int64
+	heartbeatSeq.Store(int64(session.LastSeq))
 	healthySession := false
 
 	done := make(chan struct{})
@@ -203,6 +206,7 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 		if payload.S > 0 {
 			session.LastSeq = payload.S
 			a.saveSession(cfg.ID, session)
+			heartbeatSeq.Store(int64(payload.S))
 		}
 
 		switch payload.Op {
@@ -214,7 +218,9 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 				heartbeat.cancel()
 			}
 			interval := parseHeartbeatInterval(payload.D)
-			heartbeat = startHeartbeat(ctx, writer, interval, &session)
+			heartbeat = startHeartbeat(ctx, writer, interval, func() int {
+				return int(heartbeatSeq.Load())
+			})
 		case 0:
 			dispatchHealthy, err := a.handleDispatch(ctx, cfg, handler, payload.T, payload.D, &session)
 			if err != nil {
@@ -331,18 +337,18 @@ func (a *QQAdapter) dispatchInbound(ctx context.Context, cfg channel.ChannelConf
 	}()
 }
 
-func startHeartbeat(parent context.Context, writer *gatewayWriter, interval time.Duration, session *sessionState) heartbeatHandle {
+func startHeartbeat(parent context.Context, writer *gatewayWriter, interval time.Duration, seqValue func() int) heartbeatHandle {
 	ctx, cancel := context.WithCancel(parent)
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
-	go runHeartbeat(ctx, writer, ticker, session, done)
+	go runHeartbeat(ctx, writer, ticker, seqValue, done)
 	return heartbeatHandle{
 		cancel: cancel,
 		done:   done,
 	}
 }
 
-func runHeartbeat(ctx context.Context, writer *gatewayWriter, ticker *time.Ticker, session *sessionState, done chan<- struct{}) {
+func runHeartbeat(ctx context.Context, writer *gatewayWriter, ticker *time.Ticker, seqValue func() int, done chan<- struct{}) {
 	defer ticker.Stop()
 	if done != nil {
 		defer close(done)
@@ -354,7 +360,7 @@ func runHeartbeat(ctx context.Context, writer *gatewayWriter, ticker *time.Ticke
 		case <-ticker.C:
 			_ = writer.WriteJSON(map[string]any{
 				"op": 1,
-				"d":  session.LastSeq,
+				"d":  seqValue(),
 			})
 		}
 	}
