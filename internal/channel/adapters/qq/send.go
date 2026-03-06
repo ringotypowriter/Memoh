@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -218,11 +219,15 @@ func (a *QQAdapter) prepareAttachmentUpload(ctx context.Context, fallbackBotID s
 }
 
 func (a *QQAdapter) prepareRemoteAttachmentUpload(ctx context.Context, att channel.Attachment, remoteURL string) (attachmentUpload, error) {
+	u, err := url.Parse(remoteURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return attachmentUpload{}, fmt.Errorf("invalid attachment url: %s", remoteURL)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, remoteURL, nil)
 	if err != nil {
 		return attachmentUpload{}, err
 	}
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.httpClient.Do(req) //nolint:gosec // remote URL is validated to http(s) with non-empty host above
 	if err != nil {
 		return attachmentUpload{}, err
 	}

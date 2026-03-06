@@ -24,7 +24,7 @@ func NewExecutor(log *slog.Logger) *Executor {
 	}
 }
 
-func (e *Executor) ListTools(_ context.Context, session mcpgw.ToolSessionContext) ([]mcpgw.ToolDescriptor, error) {
+func (*Executor) ListTools(_ context.Context, session mcpgw.ToolSessionContext) ([]mcpgw.ToolDescriptor, error) {
 	if session.IsSubagent {
 		return []mcpgw.ToolDescriptor{}, nil
 	}
@@ -50,7 +50,7 @@ func (e *Executor) ListTools(_ context.Context, session mcpgw.ToolSessionContext
 	}, nil
 }
 
-func (e *Executor) CallTool(_ context.Context, session mcpgw.ToolSessionContext, toolName string, arguments map[string]any) (map[string]any, error) {
+func (*Executor) CallTool(_ context.Context, session mcpgw.ToolSessionContext, toolName string, arguments map[string]any) (map[string]any, error) {
 	if toolName != toolUseSkill {
 		return nil, mcpgw.ErrToolNotFound
 	}

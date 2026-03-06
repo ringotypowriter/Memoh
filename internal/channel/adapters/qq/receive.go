@@ -154,7 +154,10 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 		return false, err
 	}
 
-	conn, _, err := a.dialer.DialContext(ctx, gatewayURL, nil)
+	conn, resp, err := a.dialer.DialContext(ctx, gatewayURL, nil)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		return false, err
 	}
@@ -187,14 +190,7 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 		if err != nil {
 			var closeErr *websocket.CloseError
 			if errors.As(err, &closeErr) {
-				switch closeErr.Code {
-				case 4004:
-					client.clearToken()
-				case 4006, 4007, 4009:
-					a.clearSession(cfg.ID)
-				case 4914, 4915:
-					return healthySession, nil
-				}
+				return a.handleGatewayClose(cfg.ID, client, &session, closeErr, healthySession)
 			}
 			return healthySession, err
 		}
@@ -211,14 +207,14 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 
 		switch payload.Op {
 		case 10:
-			if err := a.handleHello(ctx, writer, client, &session, payload.D); err != nil {
+			if err := handleHello(ctx, writer, client, &session, payload.D); err != nil {
 				return healthySession, err
 			}
 			if heartbeat.cancel != nil {
 				heartbeat.cancel()
 			}
 			interval := parseHeartbeatInterval(payload.D)
-			heartbeat = a.startHeartbeat(ctx, writer, interval, &session)
+			heartbeat = startHeartbeat(ctx, writer, interval, &session)
 		case 0:
 			dispatchHealthy, err := a.handleDispatch(ctx, cfg, handler, payload.T, payload.D, &session)
 			if err != nil {
@@ -236,7 +232,22 @@ func (a *QQAdapter) serveConnection(ctx context.Context, cfg channel.ChannelConf
 	}
 }
 
-func (a *QQAdapter) handleHello(ctx context.Context, writer *gatewayWriter, client *qqClient, session *sessionState, raw json.RawMessage) error {
+func (a *QQAdapter) handleGatewayClose(configID string, client *qqClient, session *sessionState, closeErr *websocket.CloseError, healthySession bool) (bool, error) {
+	switch closeErr.Code {
+	case 4004:
+		if client != nil {
+			client.clearToken()
+		}
+	case 4006, 4007, 4009:
+		a.clearSession(configID)
+	case 4914, 4915:
+		a.adjustSessionAfterInvalid(configID, session)
+		return healthySession, fmt.Errorf("qq gateway closed with intent code %d", closeErr.Code)
+	}
+	return healthySession, closeErr
+}
+
+func handleHello(ctx context.Context, writer *gatewayWriter, client *qqClient, session *sessionState, _ json.RawMessage) error {
 	token, err := client.accessToken(ctx)
 	if err != nil {
 		return err
@@ -320,18 +331,18 @@ func (a *QQAdapter) dispatchInbound(ctx context.Context, cfg channel.ChannelConf
 	}()
 }
 
-func (a *QQAdapter) startHeartbeat(parent context.Context, writer *gatewayWriter, interval time.Duration, session *sessionState) heartbeatHandle {
+func startHeartbeat(parent context.Context, writer *gatewayWriter, interval time.Duration, session *sessionState) heartbeatHandle {
 	ctx, cancel := context.WithCancel(parent)
 	ticker := time.NewTicker(interval)
 	done := make(chan struct{})
-	go a.runHeartbeat(ctx, writer, ticker, session, done)
+	go runHeartbeat(ctx, writer, ticker, session, done)
 	return heartbeatHandle{
 		cancel: cancel,
 		done:   done,
 	}
 }
 
-func (a *QQAdapter) runHeartbeat(ctx context.Context, writer *gatewayWriter, ticker *time.Ticker, session *sessionState, done chan<- struct{}) {
+func runHeartbeat(ctx context.Context, writer *gatewayWriter, ticker *time.Ticker, session *sessionState, done chan<- struct{}) {
 	defer ticker.Stop()
 	if done != nil {
 		defer close(done)
@@ -583,11 +594,11 @@ func nextReconnectDelay(backoffs []time.Duration, attempt int, healthySession bo
 	if healthySession {
 		attempt = 0
 	}
-	delay := backoffs[min(attempt, len(backoffs)-1)]
+	delay := backoffs[intMin(attempt, len(backoffs)-1)]
 	return delay, attempt + 1
 }
 
-func min(a, b int) int {
+func intMin(a, b int) int {
 	if a < b {
 		return a
 	}

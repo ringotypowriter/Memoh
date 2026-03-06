@@ -11,9 +11,8 @@ import (
 	"strings"
 	"time"
 
-	readability "github.com/go-shiori/go-readability"
-
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
+	readability "github.com/go-shiori/go-readability"
 
 	mcpgw "github.com/memohai/memoh/internal/mcp"
 )
@@ -40,7 +39,7 @@ func NewExecutor(log *slog.Logger) *Executor {
 	}
 }
 
-func (e *Executor) ListTools(_ context.Context, _ mcpgw.ToolSessionContext) ([]mcpgw.ToolDescriptor, error) {
+func (*Executor) ListTools(_ context.Context, _ mcpgw.ToolSessionContext) ([]mcpgw.ToolDescriptor, error) {
 	return []mcpgw.ToolDescriptor{
 		{
 			Name:        toolWebFetch,
@@ -135,7 +134,7 @@ func detectFormat(contentType string) string {
 	}
 }
 
-func (e *Executor) processJSON(fetchedURL, contentType string, body []byte) (map[string]any, error) {
+func (*Executor) processJSON(fetchedURL, contentType string, body []byte) (map[string]any, error) {
 	var data any
 	if err := json.Unmarshal(body, &data); err != nil {
 		return mcpgw.BuildToolErrorResult("Failed to parse JSON"), nil
@@ -149,7 +148,7 @@ func (e *Executor) processJSON(fetchedURL, contentType string, body []byte) (map
 	}), nil
 }
 
-func (e *Executor) processXML(fetchedURL, contentType string, body []byte) (map[string]any, error) {
+func (*Executor) processXML(fetchedURL, contentType string, body []byte) (map[string]any, error) {
 	content := string(body)
 	if len(content) > maxTextContent {
 		content = content[:maxTextContent]
@@ -203,7 +202,7 @@ func (e *Executor) processHTML(fetchedURL, contentType string, body []byte) (map
 	}), nil
 }
 
-func (e *Executor) processText(fetchedURL, contentType string, body []byte) (map[string]any, error) {
+func (*Executor) processText(fetchedURL, contentType string, body []byte) (map[string]any, error) {
 	content := string(body)
 	length := len(content)
 	if length > maxTextContent {

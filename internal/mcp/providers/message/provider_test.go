@@ -363,6 +363,29 @@ func TestExecutor_CallTool_TopLevelAttachmentsArePreserved(t *testing.T) {
 	}
 }
 
+func TestExecutor_CallTool_AllowsEmptyTopLevelAttachmentsArray(t *testing.T) {
+	sender := &fakeSender{}
+	resolver := &fakeResolver{ct: channel.ChannelType("qq")}
+	exec := NewExecutor(nil, sender, nil, resolver, &fakeAssetResolver{})
+	session := mcpgw.ToolSessionContext{BotID: "bot1", CurrentPlatform: "qq"}
+
+	result, err := exec.CallTool(context.Background(), session, toolSend, map[string]any{
+		"platform":    "qq",
+		"target":      "3fe2bad9-3eae-4f23-872c-b7a63662aa00",
+		"text":        "hello",
+		"attachments": []any{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpgw.PayloadError(result); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.lastReq.Message.Attachments) != 0 {
+		t.Fatalf("expected no attachments, got %d", len(sender.lastReq.Message.Attachments))
+	}
+}
+
 func TestExecutor_CallTool_DataAttachmentsFailWhenIngestFails(t *testing.T) {
 	sender := &fakeSender{}
 	resolver := &fakeResolver{ct: channel.ChannelType("qq")}

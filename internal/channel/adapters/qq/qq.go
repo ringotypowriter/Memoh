@@ -19,7 +19,7 @@ import (
 
 const (
 	defaultAPIBaseURL   = "https://api.sgroup.qq.com"
-	defaultTokenURL     = "https://bots.qq.com/app/getAppAccessToken"
+	qqOAuthEndpoint     = "https://bots.qq.com/app/getAppAccessToken"
 	defaultChunkLimit   = 2000
 	defaultReadTimeout  = 45 * time.Second
 	defaultWriteTimeout = 15 * time.Second
@@ -73,7 +73,7 @@ func NewQQAdapter(log *slog.Logger) *QQAdapter {
 			HandshakeTimeout: 15 * time.Second,
 		},
 		apiBaseURL: defaultAPIBaseURL,
-		tokenURL:   defaultTokenURL,
+		tokenURL:   qqOAuthEndpoint,
 		clients:    make(map[string]*qqClient),
 		sessions:   make(map[string]sessionState),
 	}
@@ -234,7 +234,7 @@ func (a *QQAdapter) getOrCreateClient(cfg channel.ChannelConfig, parsed Config) 
 
 	client := &qqClient{
 		appID:        parsed.AppID,
-		clientSecret: parsed.ClientSecret,
+		clientSecret: parsed.AppSecret,
 		httpClient:   a.httpClient,
 		logger:       a.logger,
 		apiBaseURL:   a.apiBaseURL,

@@ -2,8 +2,11 @@ package qq
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/memohai/memoh/internal/channel"
 )
@@ -207,8 +210,7 @@ func TestAdjustSessionAfterInvalidKeepsIntentLevel(t *testing.T) {
 func TestStartHeartbeatCancelStopsSessionLoop(t *testing.T) {
 	t.Parallel()
 
-	adapter := NewQQAdapter(nil)
-	heartbeat := adapter.startHeartbeat(context.Background(), &gatewayWriter{}, time.Hour, &sessionState{})
+	heartbeat := startHeartbeat(context.Background(), &gatewayWriter{}, time.Hour, &sessionState{})
 	heartbeat.cancel()
 
 	select {
@@ -257,5 +259,44 @@ func TestNextReconnectDelayResetsAfterHealthySession(t *testing.T) {
 	}
 	if attempt != 1 {
 		t.Fatalf("unexpected next attempt: %d", attempt)
+	}
+}
+
+func TestHandleGatewayClose_IntentCodesRequireReconnect(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewQQAdapter(nil)
+	session := sessionState{
+		SessionID:   "session-1",
+		LastSeq:     42,
+		IntentLevel: 1,
+	}
+
+	healthy, err := adapter.handleGatewayClose(
+		"cfg-intent",
+		&qqClient{},
+		&session,
+		&websocket.CloseError{Code: 4914},
+		true,
+	)
+	if !healthy {
+		t.Fatal("expected healthy flag to be preserved")
+	}
+	if err == nil {
+		t.Fatal("expected reconnect error")
+	}
+	if !strings.Contains(err.Error(), "intent code 4914") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if session.SessionID != "" || session.LastSeq != 0 {
+		t.Fatalf("session should be reset, got id=%q seq=%d", session.SessionID, session.LastSeq)
+	}
+
+	saved := adapter.loadSession("cfg-intent")
+	if saved.SessionID != "" || saved.LastSeq != 0 {
+		t.Fatalf("saved session should be reset, got id=%q seq=%d", saved.SessionID, saved.LastSeq)
+	}
+	if saved.IntentLevel != session.IntentLevel {
+		t.Fatalf("unexpected intent level: %d", saved.IntentLevel)
 	}
 }

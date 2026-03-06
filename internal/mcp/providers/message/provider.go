@@ -194,14 +194,16 @@ func (p *Executor) callSend(ctx context.Context, session mcpgw.ToolSessionContex
 	// Resolve top-level attachments parameter.
 	if rawAttachments, ok := arguments["attachments"]; ok && rawAttachments != nil {
 		items := normalizeAttachmentInputs(rawAttachments)
-		if len(items) == 0 {
+		if items == nil {
 			return mcpgw.BuildToolErrorResult("attachments must be a string, object, or array"), nil
 		}
-		resolved := p.resolveAttachments(ctx, botID, items)
-		if len(resolved) == 0 {
-			return mcpgw.BuildToolErrorResult("attachments could not be resolved"), nil
+		if len(items) > 0 {
+			resolved := p.resolveAttachments(ctx, botID, items)
+			if len(resolved) == 0 {
+				return mcpgw.BuildToolErrorResult("attachments could not be resolved"), nil
+			}
+			outboundMessage.Attachments = append(outboundMessage.Attachments, resolved...)
 		}
-		outboundMessage.Attachments = append(outboundMessage.Attachments, resolved...)
 	}
 
 	if outboundMessage.IsEmpty() {
@@ -362,6 +364,9 @@ func normalizeAttachmentInputs(raw any) []any {
 	case nil:
 		return nil
 	case []any:
+		if v == nil {
+			return []any{}
+		}
 		return v
 	case []string:
 		items := make([]any, 0, len(v))

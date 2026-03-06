@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,7 +34,7 @@ type qqClient struct {
 }
 
 func (c *qqClient) matches(cfg Config) bool {
-	return c.appID == cfg.AppID && c.clientSecret == cfg.ClientSecret
+	return c.appID == cfg.AppID && c.clientSecret == cfg.AppSecret
 }
 
 func (c *qqClient) clearToken() {
@@ -59,13 +60,17 @@ func (c *qqClient) accessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	u, err := url.Parse(c.tokenURL)
+	if err != nil || (u.Scheme != "https" && !isLocalhost(u.Host)) {
+		return "", fmt.Errorf("invalid token url: %s", c.tokenURL)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // token URL is validated to https or localhost above
 	if err != nil {
 		return "", fmt.Errorf("qq token request: %w", err)
 	}
@@ -79,21 +84,26 @@ func (c *qqClient) accessToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("qq token request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
-	var result struct {
-		AccessToken string          `json:"access_token"`
-		ExpiresIn   json.RawMessage `json:"expires_in"`
-	}
+	var result map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return "", fmt.Errorf("qq token decode: %w", err)
 	}
-	if strings.TrimSpace(result.AccessToken) == "" {
+	tokenBytes, ok := result["access_token"]
+	if !ok {
 		return "", errors.New("qq token response missing access_token")
 	}
-	expiresIn := parseQQExpiresIn(result.ExpiresIn)
+	var token string
+	if err := json.Unmarshal(tokenBytes, &token); err != nil {
+		return "", fmt.Errorf("qq token decode: %w", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", errors.New("qq token response missing access_token")
+	}
+	expiresIn := parseQQExpiresIn(result["expires_in"])
 	if expiresIn <= 0 {
 		expiresIn = 7200
 	}
-	c.token = result.AccessToken
+	c.token = token
 	c.expiresAt = time.Now().Add(time.Duration(expiresIn) * time.Second)
 	return c.token, nil
 }
@@ -172,7 +182,7 @@ func (c *qqClient) doJSONWithRetry(ctx context.Context, method, url string, payl
 	return lastErr
 }
 
-func (c *qqClient) doJSONOnce(ctx context.Context, method, url string, payload any, out any, auth bool) error {
+func (c *qqClient) doJSONOnce(ctx context.Context, method, requestURL string, payload any, out any, auth bool) error {
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
@@ -182,7 +192,11 @@ func (c *qqClient) doJSONOnce(ctx context.Context, method, url string, payload a
 		body = bytes.NewReader(encoded)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	u, err := url.Parse(requestURL)
+	if err != nil || (u.Scheme != "https" && !isLocalhost(u.Host)) {
+		return fmt.Errorf("invalid api url: %s", requestURL)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 	if err != nil {
 		return err
 	}
@@ -196,7 +210,7 @@ func (c *qqClient) doJSONOnce(ctx context.Context, method, url string, payload a
 		req.Header.Set("Authorization", "QQBot "+token)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // requestURL is validated to https or localhost above
 	if err != nil {
 		return err
 	}
@@ -210,7 +224,7 @@ func (c *qqClient) doJSONOnce(ctx context.Context, method, url string, payload a
 		return fmt.Errorf(
 			"qq api request failed: method=%s url=%s status=%d body=%s",
 			method,
-			url,
+			requestURL,
 			resp.StatusCode,
 			strings.TrimSpace(string(raw)),
 		)
@@ -369,4 +383,15 @@ func (c *qqClient) sendMedia(ctx context.Context, target qqTarget, fileInfo, rep
 	default:
 		return fmt.Errorf("qq media send not supported for target kind: %s", target.Kind)
 	}
+}
+
+func isLocalhost(host string) bool {
+	host = strings.ToLower(host)
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	if strings.HasPrefix(host, "127.0.0.1:") || strings.HasPrefix(host, "[::1]:") || strings.HasPrefix(host, "localhost:") {
+		return true
+	}
+	return false
 }

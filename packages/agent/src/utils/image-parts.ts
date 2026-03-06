@@ -37,9 +37,18 @@ const parseDataUrl = (payload: string): { bytes: Uint8Array; mediaType?: string 
   const segments = header.split(';').map((segment) => segment.trim()).filter(Boolean)
   const mediaType = normalizeMediaType(segments.find((segment) => segment.includes('/')))
   const isBase64 = segments.some((segment) => segment.toLowerCase() === 'base64')
-  const buffer = isBase64
-    ? Buffer.from(body, 'base64')
-    : Buffer.from(decodeURIComponent(body), 'utf8')
+  let buffer: Buffer
+  if (isBase64) {
+    buffer = Buffer.from(body, 'base64')
+  }
+  else {
+    try {
+      buffer = Buffer.from(decodeURIComponent(body), 'utf8')
+    }
+    catch {
+      return null
+    }
+  }
 
   return {
     bytes: new Uint8Array(buffer),

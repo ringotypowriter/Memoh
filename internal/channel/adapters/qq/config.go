@@ -9,7 +9,7 @@ import (
 
 type Config struct {
 	AppID           string
-	ClientSecret    string
+	AppSecret       string
 	MarkdownSupport bool
 	EnableInputHint bool
 }
@@ -26,7 +26,7 @@ func normalizeConfig(raw map[string]any) (map[string]any, error) {
 	}
 	return map[string]any{
 		"appId":           cfg.AppID,
-		"clientSecret":    cfg.ClientSecret,
+		"clientSecret":    cfg.AppSecret,
 		"markdownSupport": cfg.MarkdownSupport,
 		"enableInputHint": cfg.EnableInputHint,
 	}, nil
@@ -97,7 +97,7 @@ func parseConfig(raw map[string]any) (Config, error) {
 	}
 	return Config{
 		AppID:           appID,
-		ClientSecret:    clientSecret,
+		AppSecret:       clientSecret,
 		MarkdownSupport: readBool(raw, true, "markdownSupport", "markdown_support"),
 		EnableInputHint: readBool(raw, true, "enableInputHint", "enable_input_hint"),
 	}, nil

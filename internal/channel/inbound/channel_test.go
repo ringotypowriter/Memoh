@@ -801,7 +801,7 @@ func TestChannelInboundProcessorIngestsQQFileAttachmentWithOriginalExt(t *testin
 	processor.SetMediaService(mediaSvc)
 	sender := &fakeReplySender{}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = io.WriteString(w, "# hello\n")
 	}))

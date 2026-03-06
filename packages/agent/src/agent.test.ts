@@ -50,6 +50,19 @@ describe('createImagePartFromAttachment', () => {
     expect(part?.mediaType).toBe('image/png')
   })
 
+  it('falls back to string payloads for malformed non-base64 data URLs', () => {
+    const payload = 'data:image/png,a%ZZ'
+    const part = createImagePartFromAttachment({
+      type: 'image',
+      transport: 'inline_data_url',
+      payload,
+      mime: 'image/png',
+    })
+
+    expect(part?.image).toBe(payload)
+    expect(part?.mediaType).toBe('image/png')
+  })
+
   it('skips tool file references', () => {
     const part = createImagePartFromAttachment({
       type: 'image',
