@@ -83,6 +83,78 @@ func TestQQOutboundStreamFinalUsesExplicitMessageAndBufferedAttachments(t *testi
 	}
 }
 
+func TestQQOutboundStreamFinalPrefersBufferedVisibleText(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "c2c:user-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "visible "}); err != nil {
+		t.Fatalf("push delta1: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "answer"}); err != nil {
+		t.Fatalf("push delta2: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{Message: channel.Message{
+			Text: "internal trace\nvisible answer",
+		}},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send, got %d", len(sent))
+	}
+	if got := sent[0].Message.PlainText(); got != "visible answer" {
+		t.Fatalf("unexpected text: %q", got)
+	}
+}
+
+func TestQQOutboundStreamIgnoresLaterTextOnlyFinalAfterBufferedReply(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "c2c:user-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventDelta, Delta: "visible answer"}); err != nil {
+		t.Fatalf("push delta: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{Type: channel.StreamEventFinal, Final: &channel.StreamFinalizePayload{}}); err != nil {
+		t.Fatalf("push first final: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{Message: channel.Message{
+			Text: "我需要按照用户的要求，在工具调用后完整复述。",
+		}},
+	}); err != nil {
+		t.Fatalf("push second final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected 1 outbound message, got %d", len(sent))
+	}
+	if got := sent[0].Message.PlainText(); got != "visible answer" {
+		t.Fatalf("unexpected text: %q", got)
+	}
+}
+
 func TestQQOutboundStreamRejectsAfterClose(t *testing.T) {
 	t.Parallel()
 

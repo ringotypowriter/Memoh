@@ -634,6 +634,57 @@ func TestChannelInboundProcessorGroupMentionTriggersReply(t *testing.T) {
 	}
 }
 
+type failingOpenStreamSender struct {
+	err error
+}
+
+func (*failingOpenStreamSender) Send(_ context.Context, _ channel.OutboundMessage) error {
+	return nil
+}
+
+func (s *failingOpenStreamSender) OpenStream(_ context.Context, _ string, _ channel.StreamOptions) (channel.OutboundStream, error) {
+	if s != nil && s.err != nil {
+		return nil, s.err
+	}
+	return nil, errors.New("open stream failed")
+}
+
+func TestChannelInboundProcessorPersistsActiveChatBeforeOpenStream(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-openstream"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-openstream", RouteID: "route-openstream"}}
+	gateway := &fakeChatGateway{}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	sender := &failingOpenStreamSender{err: errors.New("stream unavailable")}
+
+	cfg := channel.ChannelConfig{ID: "cfg-openstream", BotID: "bot-1", ChannelType: channel.ChannelType("qq")}
+	msg := channel.InboundMessage{
+		BotID:       "bot-1",
+		Channel:     channel.ChannelType("qq"),
+		Message:     channel.Message{ID: "msg-openstream-1", Text: "hello"},
+		ReplyTarget: "c2c:user-openid",
+		Sender:      channel.Identity{SubjectID: "user-1"},
+		Conversation: channel.Conversation{
+			ID:   "conv-openstream",
+			Type: "p2p",
+		},
+	}
+
+	err := processor.HandleInbound(context.Background(), cfg, msg, sender)
+	if err == nil || err.Error() != "stream unavailable" {
+		t.Fatalf("expected open stream error, got: %v", err)
+	}
+	if len(chatSvc.persistedIn) != 1 {
+		t.Fatalf("expected active-chat user turn to be persisted before stream open, got %d", len(chatSvc.persistedIn))
+	}
+	if got := chatSvc.persistedIn[0].ExternalMessageID; got != "msg-openstream-1" {
+		t.Fatalf("unexpected persisted external_message_id: %q", got)
+	}
+	if gateway.gotReq.Query != "" {
+		t.Fatalf("runner should not be called when stream open fails")
+	}
+}
+
 func TestChannelInboundProcessorPersistsAttachmentAssetRefs(t *testing.T) {
 	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-asset"}}
 	memberSvc := &fakeMemberService{isMember: true}

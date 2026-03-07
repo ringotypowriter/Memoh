@@ -19,6 +19,7 @@ type qqOutboundStream struct {
 	mu          sync.Mutex
 	buffer      strings.Builder
 	attachments []channel.Attachment
+	sentText    bool
 }
 
 func (a *QQAdapter) OpenStream(_ context.Context, cfg channel.ChannelConfig, target string, opts channel.StreamOptions) (channel.OutboundStream, error) {
@@ -113,15 +114,19 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 	s.mu.Lock()
 	bufferedText := strings.TrimSpace(s.buffer.String())
 	bufferedAttachments := append([]channel.Attachment(nil), s.attachments...)
+	alreadySentText := s.sentText
 	s.buffer.Reset()
 	s.attachments = nil
 	s.mu.Unlock()
 
-	if strings.TrimSpace(msg.PlainText()) == "" && bufferedText != "" {
+	if bufferedText != "" {
 		msg.Text = bufferedText
+		msg.Parts = nil
 		if msg.Format == "" {
 			msg.Format = channel.MessageFormatPlain
 		}
+	} else if alreadySentText && len(bufferedAttachments) == 0 && len(msg.Attachments) == 0 && strings.TrimSpace(msg.PlainText()) != "" {
+		return nil
 	}
 	if len(bufferedAttachments) > 0 {
 		msg.Attachments = append(bufferedAttachments, msg.Attachments...)
@@ -132,8 +137,16 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 	if msg.IsEmpty() {
 		return nil
 	}
-	return s.send(ctx, channel.OutboundMessage{
+	if err := s.send(ctx, channel.OutboundMessage{
 		Target:  s.target,
 		Message: msg,
-	})
+	}); err != nil {
+		return err
+	}
+	if strings.TrimSpace(msg.PlainText()) != "" {
+		s.mu.Lock()
+		s.sentText = true
+		s.mu.Unlock()
+	}
+	return nil
 }

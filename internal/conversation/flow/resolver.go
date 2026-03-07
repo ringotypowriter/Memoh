@@ -359,6 +359,7 @@ func (r *Resolver) resolve(ctx context.Context, req conversation.ChatRequest) (r
 			return resolvedContext{}, loadErr
 		}
 		loaded = pruneHistoryForGateway(loaded)
+		loaded = dedupePersistedCurrentUserMessage(loaded, req)
 		messages = trimMessagesByTokens(r.logger, loaded, historyBudget)
 		r.logger.Debug("context trim result",
 			slog.Int("loaded_messages", len(loaded)),
@@ -1184,6 +1185,10 @@ type messageWithUsage struct {
 	Message           conversation.ModelMessage
 	UsageInputTokens  *int
 	UsageOutputTokens *int
+	RouteID           string
+	ExternalMessageID string
+	Platform          string
+	SenderChannelID   string
 }
 
 func (r *Resolver) loadMessages(ctx context.Context, chatID string, maxContextMinutes int) ([]messageWithUsage, error) {
@@ -1214,9 +1219,53 @@ func (r *Resolver) loadMessages(ctx context.Context, chatID string, maxContextMi
 				outputTokens = u.OutputTokens
 			}
 		}
-		result = append(result, messageWithUsage{Message: mm, UsageInputTokens: inputTokens, UsageOutputTokens: outputTokens})
+		result = append(result, messageWithUsage{
+			Message:           mm,
+			UsageInputTokens:  inputTokens,
+			UsageOutputTokens: outputTokens,
+			RouteID:           strings.TrimSpace(m.RouteID),
+			ExternalMessageID: strings.TrimSpace(m.ExternalMessageID),
+			Platform:          strings.TrimSpace(m.Platform),
+			SenderChannelID:   strings.TrimSpace(m.SenderChannelIdentityID),
+		})
 	}
 	return result, nil
+}
+
+func dedupePersistedCurrentUserMessage(messages []messageWithUsage, req conversation.ChatRequest) []messageWithUsage {
+	if !req.UserMessagePersisted || len(messages) == 0 {
+		return messages
+	}
+
+	targetRouteID := strings.TrimSpace(req.RouteID)
+	targetExternalID := strings.TrimSpace(req.ExternalMessageID)
+	targetPlatform := strings.TrimSpace(req.CurrentChannel)
+	targetSenderChannelID := strings.TrimSpace(req.SourceChannelIdentityID)
+	if targetExternalID == "" {
+		return messages
+	}
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		item := messages[i]
+		if !strings.EqualFold(strings.TrimSpace(item.Message.Role), "user") {
+			continue
+		}
+		if strings.TrimSpace(item.ExternalMessageID) != targetExternalID {
+			continue
+		}
+		if targetRouteID != "" && item.RouteID != "" && item.RouteID != targetRouteID {
+			continue
+		}
+		if targetPlatform != "" && item.Platform != "" && !strings.EqualFold(item.Platform, targetPlatform) {
+			continue
+		}
+		if targetSenderChannelID != "" && item.SenderChannelID != "" && item.SenderChannelID != targetSenderChannelID {
+			continue
+		}
+		return append(messages[:i], messages[i+1:]...)
+	}
+
+	return messages
 }
 
 func estimateMessageTokens(msg conversation.ModelMessage) int {
@@ -1349,6 +1398,11 @@ func (r *Resolver) persistUserMessage(ctx context.Context, req conversation.Chat
 		return err
 	}
 	senderChannelIdentityID, senderUserID := r.resolvePersistSenderIDs(ctx, req)
+	meta := buildRouteMetadata(req)
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["trigger_mode"] = "active_chat"
 	_, err = r.messageService.Persist(ctx, messagepkg.PersistInput{
 		BotID:                   req.BotID,
 		RouteID:                 req.RouteID,
@@ -1358,7 +1412,7 @@ func (r *Resolver) persistUserMessage(ctx context.Context, req conversation.Chat
 		ExternalMessageID:       req.ExternalMessageID,
 		Role:                    "user",
 		Content:                 content,
-		Metadata:                buildRouteMetadata(req),
+		Metadata:                meta,
 		Assets:                  chatAttachmentsToAssetRefs(req.Attachments),
 	})
 	return err
