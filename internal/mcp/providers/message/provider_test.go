@@ -363,6 +363,123 @@ func TestExecutor_CallTool_TopLevelAttachmentsArePreserved(t *testing.T) {
 	}
 }
 
+func TestExecutor_CallTool_DedupesTopLevelAndMessageAttachments(t *testing.T) {
+	sender := &fakeSender{}
+	resolver := &fakeResolver{ct: channel.ChannelType("telegram")}
+	exec := NewExecutor(nil, sender, nil, resolver, &fakeAssetResolver{})
+	session := mcpgw.ToolSessionContext{BotID: "bot1", CurrentPlatform: "telegram"}
+
+	result, err := exec.CallTool(context.Background(), session, toolSend, map[string]any{
+		"platform": "telegram",
+		"target":   "123",
+		"message": map[string]any{
+			"text": "hello",
+			"attachments": []map[string]any{
+				{"url": "https://example.com/test.jpg", "type": "image"},
+			},
+		},
+		"attachments": []string{"https://example.com/test.jpg"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpgw.PayloadError(result); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(sender.lastReq.Message.Attachments); got != 1 {
+		t.Fatalf("expected deduped attachments, got %d", got)
+	}
+	if got := sender.lastReq.Message.Attachments[0].URL; got != "https://example.com/test.jpg" {
+		t.Fatalf("unexpected attachment URL: %q", got)
+	}
+}
+
+func TestExecutor_CallTool_PreservesRepeatedAttachmentsWithDistinctMetadata(t *testing.T) {
+	sender := &fakeSender{}
+	resolver := &fakeResolver{ct: channel.ChannelType("telegram")}
+	exec := NewExecutor(nil, sender, nil, resolver, &fakeAssetResolver{})
+	session := mcpgw.ToolSessionContext{BotID: "bot1", CurrentPlatform: "telegram"}
+
+	result, err := exec.CallTool(context.Background(), session, toolSend, map[string]any{
+		"platform": "telegram",
+		"target":   "123",
+		"message": map[string]any{
+			"text": "hello",
+			"attachments": []map[string]any{
+				{
+					"url":     "https://example.com/test.jpg",
+					"type":    "image",
+					"caption": "first caption",
+				},
+				{
+					"url":     "https://example.com/test.jpg",
+					"type":    "image",
+					"caption": "second caption",
+				},
+				{
+					"url":  "https://example.com/test.jpg",
+					"type": "file",
+					"name": "report.jpg",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpgw.PayloadError(result); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(sender.lastReq.Message.Attachments); got != 3 {
+		t.Fatalf("expected all distinct attachments preserved, got %d", got)
+	}
+	if got := sender.lastReq.Message.Attachments[0].Caption; got != "first caption" {
+		t.Fatalf("unexpected first caption: %q", got)
+	}
+	if got := sender.lastReq.Message.Attachments[1].Caption; got != "second caption" {
+		t.Fatalf("unexpected second caption: %q", got)
+	}
+	if got := sender.lastReq.Message.Attachments[2].Type; got != channel.AttachmentFile {
+		t.Fatalf("unexpected third attachment type: %q", got)
+	}
+	if got := sender.lastReq.Message.Attachments[2].Name; got != "report.jpg" {
+		t.Fatalf("unexpected third attachment name: %q", got)
+	}
+}
+
+func TestExecutor_CallTool_DedupesResolvedTopLevelAttachments(t *testing.T) {
+	sender := &fakeSender{}
+	resolver := &fakeResolver{ct: channel.ChannelType("telegram")}
+	exec := NewExecutor(nil, sender, nil, resolver, &fakeAssetResolver{
+		ingestAsset: AssetMeta{
+			ContentHash: "hash-1",
+			Mime:        "image/png",
+			SizeBytes:   128,
+			StorageKey:  "bot1/test.png",
+		},
+	})
+	session := mcpgw.ToolSessionContext{BotID: "bot1", CurrentPlatform: "telegram"}
+
+	result, err := exec.CallTool(context.Background(), session, toolSend, map[string]any{
+		"platform":    "telegram",
+		"target":      "123",
+		"text":        "hello",
+		"attachments": []string{"/data/test.png", "/data/test.png"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mcpgw.PayloadError(result); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(sender.lastReq.Message.Attachments); got != 1 {
+		t.Fatalf("expected deduped resolved attachments, got %d", got)
+	}
+	if got := sender.lastReq.Message.Attachments[0].ContentHash; got != "hash-1" {
+		t.Fatalf("unexpected content hash: %q", got)
+	}
+}
+
 func TestExecutor_CallTool_AllowsEmptyTopLevelAttachmentsArray(t *testing.T) {
 	sender := &fakeSender{}
 	resolver := &fakeResolver{ct: channel.ChannelType("qq")}

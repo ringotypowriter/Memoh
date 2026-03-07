@@ -34,10 +34,14 @@ type feishuOutboundStream struct {
 	receiveType   string
 	cardMessageID string
 	textBuffer    strings.Builder
+	attachments   []channel.Attachment
 	lastPatchedAt time.Time
 	lastPatched   string
 	patchInterval time.Duration
 	closed        atomic.Bool
+	ensureCardFn  func(context.Context, string) error
+	patchCardFn   func(context.Context, string) error
+	sendMessageFn func(context.Context, channel.Message) error
 }
 
 func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEvent) error {
@@ -55,7 +59,7 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 	switch event.Type {
 	case channel.StreamEventStatus:
 		if event.Status == channel.StreamStatusStarted {
-			return s.ensureCard(ctx, feishuStreamThinkingText)
+			return s.ensureStreamCard(ctx, feishuStreamThinkingText)
 		}
 		return nil
 	case channel.StreamEventDelta:
@@ -63,17 +67,17 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 			return nil
 		}
 		s.textBuffer.WriteString(event.Delta)
-		if err := s.ensureCard(ctx, feishuStreamThinkingText); err != nil {
+		if err := s.ensureStreamCard(ctx, feishuStreamThinkingText); err != nil {
 			return err
 		}
 		if time.Since(s.lastPatchedAt) < s.patchInterval && !strings.Contains(event.Delta, "\n") {
 			return nil
 		}
-		return s.patchCard(ctx, s.textBuffer.String())
+		return s.patchStreamCard(ctx, s.textBuffer.String())
 	case channel.StreamEventToolCallStart:
 		bufText := strings.TrimSpace(s.textBuffer.String())
 		if s.cardMessageID != "" && bufText != "" {
-			_ = s.patchCard(ctx, bufText)
+			_ = s.patchStreamCard(ctx, bufText)
 		}
 		s.cardMessageID = ""
 		s.lastPatched = ""
@@ -90,57 +94,62 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		if len(event.Attachments) == 0 {
 			return nil
 		}
-		media := channel.Message{
-			Attachments: event.Attachments,
-		}
-		return s.adapter.Send(ctx, s.cfg, channel.OutboundMessage{
-			Target:  s.target,
-			Message: media,
-		})
+		s.attachments = append(s.attachments, event.Attachments...)
+		return nil
 	case channel.StreamEventPhaseStart, channel.StreamEventPhaseEnd:
 		return nil
 	case channel.StreamEventAgentStart, channel.StreamEventAgentEnd, channel.StreamEventProcessingStarted, channel.StreamEventProcessingCompleted, channel.StreamEventProcessingFailed:
 		return nil
 	case channel.StreamEventFinal:
-		if event.Final == nil || event.Final.Message.IsEmpty() {
+		msg := channel.Message{}
+		if event.Final != nil {
+			msg = event.Final.Message
+		}
+		bufText := strings.TrimSpace(s.textBuffer.String())
+		mergedAttachments := channel.DeduplicateAttachmentsExact(append(append([]channel.Attachment(nil), s.attachments...), msg.Attachments...))
+		if msg.IsEmpty() && bufText == "" && len(mergedAttachments) == 0 {
 			return nil
 		}
-		msg := event.Final.Message
-		bufText := strings.TrimSpace(s.textBuffer.String())
 		finalText := bufText
 		if finalText == "" {
 			finalText = strings.TrimSpace(msg.PlainText())
 		}
+		var cardErr error
 		if finalText != "" {
-			if err := s.ensureCard(ctx, feishuStreamThinkingText); err != nil {
-				return err
+			if err := s.ensureStreamCard(ctx, feishuStreamThinkingText); err != nil {
+				cardErr = err
+			} else if err := s.patchStreamCard(ctx, finalText); err != nil {
+				cardErr = err
 			}
-			if err := s.patchCard(ctx, finalText); err != nil {
+		}
+		if len(mergedAttachments) > 0 {
+			if err := s.flushBufferedAttachments(ctx, mergedAttachments, msg); err != nil {
+				if cardErr != nil {
+					return errors.Join(cardErr, err)
+				}
 				return err
 			}
 		}
-		if len(msg.Attachments) > 0 {
-			media := msg
-			media.Format = ""
-			media.Text = ""
-			media.Parts = nil
-			media.Actions = nil
-			media.Reply = nil
-			return s.adapter.Send(ctx, s.cfg, channel.OutboundMessage{
-				Target:  s.target,
-				Message: media,
-			})
-		}
-		return nil
+		return cardErr
 	case channel.StreamEventError:
 		errText := strings.TrimSpace(event.Error)
 		if errText == "" {
 			return nil
 		}
-		if err := s.ensureCard(ctx, feishuStreamThinkingText); err != nil {
+		var cardErr error
+		if err := s.ensureStreamCard(ctx, feishuStreamThinkingText); err != nil {
+			cardErr = err
+		} else if err := s.patchStreamCard(ctx, "Error: "+errText); err != nil {
+			cardErr = err
+		}
+		attachments := channel.DeduplicateAttachmentsExact(append([]channel.Attachment(nil), s.attachments...))
+		if err := s.flushBufferedAttachments(ctx, attachments, channel.Message{}); err != nil {
+			if cardErr != nil {
+				return errors.Join(cardErr, err)
+			}
 			return err
 		}
-		return s.patchCard(ctx, "Error: "+errText)
+		return cardErr
 	default:
 		return nil
 	}
@@ -156,6 +165,53 @@ func (s *feishuOutboundStream) Close(ctx context.Context) error {
 	default:
 	}
 	s.closed.Store(true)
+	return nil
+}
+
+func (s *feishuOutboundStream) ensureStreamCard(ctx context.Context, text string) error {
+	if s.ensureCardFn != nil {
+		return s.ensureCardFn(ctx, text)
+	}
+	return s.ensureCard(ctx, text)
+}
+
+func (s *feishuOutboundStream) patchStreamCard(ctx context.Context, text string) error {
+	if s.patchCardFn != nil {
+		return s.patchCardFn(ctx, text)
+	}
+	return s.patchCard(ctx, text)
+}
+
+func (s *feishuOutboundStream) sendStreamMessage(ctx context.Context, msg channel.Message) error {
+	if s.sendMessageFn != nil {
+		return s.sendMessageFn(ctx, msg)
+	}
+	return s.adapter.Send(ctx, s.cfg, channel.OutboundMessage{
+		Target:  s.target,
+		Message: msg,
+	})
+}
+
+func (s *feishuOutboundStream) flushBufferedAttachments(ctx context.Context, attachments []channel.Attachment, base channel.Message) error {
+	if len(attachments) == 0 {
+		return nil
+	}
+	pending := append([]channel.Attachment(nil), attachments...)
+	s.attachments = append([]channel.Attachment(nil), pending...)
+	for len(pending) > 0 {
+		media := base
+		media.Attachments = []channel.Attachment{pending[0]}
+		media.Format = ""
+		media.Text = ""
+		media.Parts = nil
+		media.Actions = nil
+		media.Reply = nil
+		if err := s.sendStreamMessage(ctx, media); err != nil {
+			return err
+		}
+		pending = pending[1:]
+		s.attachments = append([]channel.Attachment(nil), pending...)
+	}
 	return nil
 }
 

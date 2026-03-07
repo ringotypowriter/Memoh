@@ -23,10 +23,11 @@ import (
 )
 
 type fakeChatGateway struct {
-	resp   conversation.ChatResponse
-	err    error
-	gotReq conversation.ChatRequest
-	onChat func(conversation.ChatRequest)
+	resp         conversation.ChatResponse
+	err          error
+	gotReq       conversation.ChatRequest
+	onChat       func(conversation.ChatRequest)
+	streamChunks []conversation.StreamChunk
 }
 
 func (f *fakeChatGateway) Chat(_ context.Context, req conversation.ChatRequest) (conversation.ChatResponse, error) {
@@ -42,10 +43,22 @@ func (f *fakeChatGateway) StreamChat(_ context.Context, req conversation.ChatReq
 	if f.onChat != nil {
 		f.onChat(req)
 	}
-	chunks := make(chan conversation.StreamChunk, 1)
+	chunkCap := len(f.streamChunks)
+	if chunkCap < 1 {
+		chunkCap = 1
+	}
+	chunks := make(chan conversation.StreamChunk, chunkCap)
 	errs := make(chan error, 1)
 	if f.err != nil {
 		errs <- f.err
+		close(chunks)
+		close(errs)
+		return chunks, errs
+	}
+	if len(f.streamChunks) > 0 {
+		for _, chunk := range f.streamChunks {
+			chunks <- chunk
+		}
 		close(chunks)
 		close(errs)
 		return chunks, errs
@@ -84,6 +97,66 @@ func (s *fakeReplySender) OpenStream(_ context.Context, target string, _ channel
 	}, nil
 }
 
+func hasAttachmentEvent(events []channel.StreamEvent) bool {
+	for _, event := range events {
+		if event.Type == channel.StreamEventAttachment && len(event.Attachments) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+type fakeStreamObserver struct {
+	events []channel.StreamEvent
+}
+
+func (o *fakeStreamObserver) OnStreamEvent(_ context.Context, _ string, _ channel.ChannelType, event channel.StreamEvent) {
+	o.events = append(o.events, event)
+}
+
+func TestAppendOutboundAssetRefsDeduplicatesExactAttachmentsAcrossCalls(t *testing.T) {
+	var refs []conversation.OutboundAssetRef
+	seen := make(map[string]struct{})
+	att := channel.Attachment{
+		Type:        channel.AttachmentImage,
+		ContentHash: "asset-1",
+		Mime:        "image/png",
+		Size:        42,
+		Metadata:    map[string]any{"storage_key": "media/asset-1"},
+	}
+
+	appendOutboundAssetRefs(&refs, seen, []channel.Attachment{att})
+	appendOutboundAssetRefs(&refs, seen, []channel.Attachment{att})
+
+	if got := len(refs); got != 1 {
+		t.Fatalf("expected exact duplicate outbound refs to be collapsed, got %d", got)
+	}
+	if refs[0].ContentHash != "asset-1" {
+		t.Fatalf("unexpected content hash: %q", refs[0].ContentHash)
+	}
+	if refs[0].Ordinal != 0 {
+		t.Fatalf("unexpected ordinal: %d", refs[0].Ordinal)
+	}
+}
+
+func TestAppendOutboundAssetRefsPreservesDistinctAttachmentMetadata(t *testing.T) {
+	var refs []conversation.OutboundAssetRef
+	seen := make(map[string]struct{})
+	attachments := []channel.Attachment{
+		{Type: channel.AttachmentImage, ContentHash: "asset-1", Caption: "first"},
+		{Type: channel.AttachmentImage, ContentHash: "asset-1", Caption: "second"},
+	}
+
+	appendOutboundAssetRefs(&refs, seen, attachments)
+
+	if got := len(refs); got != 2 {
+		t.Fatalf("expected attachments with distinct metadata to be preserved, got %d", got)
+	}
+	if refs[0].Ordinal != 0 || refs[1].Ordinal != 1 {
+		t.Fatalf("unexpected ordinals: %+v", refs)
+	}
+}
+
 type fakeOutboundStream struct {
 	sender *fakeReplySender
 	target string
@@ -105,6 +178,15 @@ func (s *fakeOutboundStream) Push(_ context.Context, event channel.StreamEvent) 
 
 func (*fakeOutboundStream) Close(_ context.Context) error {
 	return nil
+}
+
+func mustStreamChunk(t *testing.T, payload any) conversation.StreamChunk {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal stream chunk: %v", err)
+	}
+	return conversation.StreamChunk(data)
 }
 
 type fakeProcessingStatusNotifier struct {
@@ -544,6 +626,266 @@ func TestChannelInboundProcessorSilentReply(t *testing.T) {
 	}
 	if len(sender.sent) != 0 {
 		t.Fatalf("NO_REPLY should suppress output: %+v", sender.sent)
+	}
+}
+
+func TestChannelInboundProcessorSuppressesDirectReplyWhenSendTargetsCurrentConversation(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-send-current"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-send-current", RouteID: "route-send-current"}}
+	mediaSvc := &fakeMediaIngestor{nextID: "asset-suppressed-1", nextMime: "image/png"}
+	dataURL := "data:image/png;base64,SGVsbG8="
+
+	sendArgs, err := json.Marshal(map[string]any{
+		"platform":    "telegram",
+		"target":      "chat-123",
+		"text":        "Here are the files",
+		"attachments": []string{dataURL},
+	})
+	if err != nil {
+		t.Fatalf("marshal send args: %v", err)
+	}
+
+	gateway := &fakeChatGateway{
+		streamChunks: []conversation.StreamChunk{
+			mustStreamChunk(t, map[string]any{
+				"type": "attachment_delta",
+				"attachments": []map[string]any{
+					{"type": "image", "url": dataURL},
+				},
+			}),
+			mustStreamChunk(t, map[string]any{
+				"type":     "tool_call_start",
+				"toolName": "send",
+				"input":    json.RawMessage(sendArgs),
+			}),
+			mustStreamChunk(t, map[string]any{
+				"type": "agent_end",
+				"messages": []conversation.ModelMessage{
+					{
+						Role: "assistant",
+						ToolCalls: []conversation.ToolCall{
+							{
+								Type: "function",
+								Function: conversation.ToolCallFunction{
+									Name:      "send",
+									Arguments: string(sendArgs),
+								},
+							},
+						},
+					},
+					{Role: "assistant", Content: conversation.NewTextContent("Here are the files")},
+				},
+			}),
+		},
+	}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	processor.SetMediaService(mediaSvc)
+	observer := &fakeStreamObserver{}
+	processor.SetStreamObserver(observer)
+	sender := &fakeReplySender{}
+
+	cfg := channel.ChannelConfig{ID: "cfg-1", BotID: "bot-1", ChannelType: channel.ChannelType("telegram")}
+	msg := channel.InboundMessage{
+		BotID:       "bot-1",
+		Channel:     channel.ChannelType("telegram"),
+		Message:     channel.Message{Text: "send me the files"},
+		ReplyTarget: "chat-123",
+		Sender:      channel.Identity{SubjectID: "user-1"},
+		Conversation: channel.Conversation{
+			ID:   "conv-1",
+			Type: "p2p",
+		},
+	}
+
+	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sender.sent) != 0 {
+		t.Fatalf("expected direct reply to be suppressed, got %+v", sender.sent)
+	}
+	if gateway.gotReq.OutboundAssetCollector == nil {
+		t.Fatal("expected outbound asset collector to be set")
+	}
+	if got := len(gateway.gotReq.OutboundAssetCollector()); got != 0 {
+		t.Fatalf("expected suppressed attachments to be excluded from collector, got %d", got)
+	}
+	if hasAttachmentEvent(observer.events) {
+		t.Fatalf("expected mirrored attachment events to be suppressed, got %+v", observer.events)
+	}
+}
+
+func TestChannelInboundProcessorSuppressesCollectorWhenOnlyFinalMessagesContainSendToolCall(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-send-final-only"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-send-final-only", RouteID: "route-send-final-only"}}
+	mediaSvc := &fakeMediaIngestor{nextID: "asset-final-only-1", nextMime: "image/png"}
+	dataURL := "data:image/png;base64,SGVsbG8="
+
+	sendArgs, err := json.Marshal(map[string]any{
+		"platform":    "telegram",
+		"target":      "chat-123",
+		"text":        "Here are the files",
+		"attachments": []string{dataURL},
+	})
+	if err != nil {
+		t.Fatalf("marshal send args: %v", err)
+	}
+
+	gateway := &fakeChatGateway{
+		streamChunks: []conversation.StreamChunk{
+			mustStreamChunk(t, map[string]any{
+				"type": "attachment_delta",
+				"attachments": []map[string]any{
+					{"type": "image", "url": dataURL},
+				},
+			}),
+			mustStreamChunk(t, map[string]any{
+				"type": "agent_end",
+				"messages": []conversation.ModelMessage{
+					{
+						Role: "assistant",
+						ToolCalls: []conversation.ToolCall{
+							{
+								Type: "function",
+								Function: conversation.ToolCallFunction{
+									Name:      "send",
+									Arguments: string(sendArgs),
+								},
+							},
+						},
+					},
+					{Role: "assistant", Content: conversation.NewTextContent("Here are the files")},
+				},
+			}),
+		},
+	}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	processor.SetMediaService(mediaSvc)
+	observer := &fakeStreamObserver{}
+	processor.SetStreamObserver(observer)
+	sender := &fakeReplySender{}
+
+	cfg := channel.ChannelConfig{ID: "cfg-1", BotID: "bot-1", ChannelType: channel.ChannelType("telegram")}
+	msg := channel.InboundMessage{
+		BotID:       "bot-1",
+		Channel:     channel.ChannelType("telegram"),
+		Message:     channel.Message{Text: "send me the files"},
+		ReplyTarget: "chat-123",
+		Sender:      channel.Identity{SubjectID: "user-1"},
+		Conversation: channel.Conversation{
+			ID:   "conv-1",
+			Type: "p2p",
+		},
+	}
+
+	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sender.sent) != 0 {
+		t.Fatalf("expected direct reply to be suppressed, got %+v", sender.sent)
+	}
+	if gateway.gotReq.OutboundAssetCollector == nil {
+		t.Fatal("expected outbound asset collector to be set")
+	}
+	if got := len(gateway.gotReq.OutboundAssetCollector()); got != 0 {
+		t.Fatalf("expected suppressed attachments to be excluded from collector, got %d", got)
+	}
+	if hasAttachmentEvent(observer.events) {
+		t.Fatalf("expected mirrored attachment events to be suppressed, got %+v", observer.events)
+	}
+}
+
+func TestChannelInboundProcessorKeepsDirectReplyAndAttachmentsAfterSendToolOnExternalChannel(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-send-other"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-send-other", RouteID: "route-send-other"}}
+	mediaSvc := &fakeMediaIngestor{nextID: "asset-external-1", nextMime: "image/png"}
+	dataURL := "data:image/png;base64,SGVsbG8="
+
+	sendArgs, err := json.Marshal(map[string]any{
+		"platform":    "telegram",
+		"target":      "chat-other",
+		"text":        "Forwarded the files",
+		"attachments": []string{dataURL},
+	})
+	if err != nil {
+		t.Fatalf("marshal send args: %v", err)
+	}
+
+	gateway := &fakeChatGateway{
+		streamChunks: []conversation.StreamChunk{
+			mustStreamChunk(t, map[string]any{
+				"type": "attachment_delta",
+				"attachments": []map[string]any{
+					{"type": "image", "url": dataURL},
+				},
+			}),
+			mustStreamChunk(t, map[string]any{
+				"type": "agent_end",
+				"messages": []conversation.ModelMessage{
+					{
+						Role: "assistant",
+						ToolCalls: []conversation.ToolCall{
+							{
+								Type: "function",
+								Function: conversation.ToolCallFunction{
+									Name:      "send",
+									Arguments: string(sendArgs),
+								},
+							},
+						},
+					},
+					{Role: "assistant", Content: conversation.NewTextContent("I forwarded the files.")},
+				},
+			}),
+		},
+	}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	processor.SetMediaService(mediaSvc)
+	observer := &fakeStreamObserver{}
+	processor.SetStreamObserver(observer)
+	sender := &fakeReplySender{}
+
+	cfg := channel.ChannelConfig{ID: "cfg-1", BotID: "bot-1", ChannelType: channel.ChannelType("telegram")}
+	msg := channel.InboundMessage{
+		BotID:       "bot-1",
+		Channel:     channel.ChannelType("telegram"),
+		Message:     channel.Message{Text: "forward and reply"},
+		ReplyTarget: "chat-123",
+		Sender:      channel.Identity{SubjectID: "user-1"},
+		Conversation: channel.Conversation{
+			ID:   "conv-1",
+			Type: "p2p",
+		},
+	}
+
+	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hasAttachmentEvent(sender.events) {
+		t.Fatalf("expected attachment event to remain visible during streaming reply, got %+v", sender.events)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected one direct reply, got %d", len(sender.sent))
+	}
+	if text := sender.sent[0].Message.PlainText(); text != "I forwarded the files." {
+		t.Fatalf("unexpected direct reply text: %q", text)
+	}
+	if got := len(sender.sent[0].Message.Attachments); got != 1 {
+		t.Fatalf("expected direct reply attachments to be preserved, got %d", got)
+	}
+	if got := sender.sent[0].Message.Attachments[0].ContentHash; got != "asset-external-1" {
+		t.Fatalf("unexpected direct reply attachment content hash: %q", got)
+	}
+	if gateway.gotReq.OutboundAssetCollector == nil {
+		t.Fatal("expected outbound asset collector to be set")
+	}
+	if got := len(gateway.gotReq.OutboundAssetCollector()); got != 1 {
+		t.Fatalf("expected delivered attachments to remain in collector, got %d", got)
+	}
+	if !hasAttachmentEvent(observer.events) {
+		t.Fatalf("expected mirrored attachment events for non-suppressed reply, got %+v", observer.events)
 	}
 }
 

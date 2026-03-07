@@ -92,6 +92,76 @@ func TestTelegramOutboundStream_PushEmptyDeltaNoOp(t *testing.T) {
 	}
 }
 
+func TestTelegramOutboundStreamBuffersAttachments(t *testing.T) {
+	t.Parallel()
+
+	stream := &telegramOutboundStream{
+		adapter: NewTelegramAdapter(nil),
+	}
+
+	err := stream.Push(context.Background(), channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{{Type: channel.AttachmentImage, URL: "https://example.com/a.png"}},
+	})
+	if err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if got := len(stream.attachments); got != 1 {
+		t.Fatalf("expected buffered attachment, got %d", got)
+	}
+}
+
+func TestTelegramOutboundStreamErrorFlushesBufferedAttachments(t *testing.T) {
+	adapter := NewTelegramAdapter(nil)
+	stream := &telegramOutboundStream{
+		adapter:       adapter,
+		cfg:           channel.ChannelConfig{ID: "test", Credentials: map[string]any{"bot_token": "fake"}},
+		target:        "123",
+		isPrivateChat: true,
+	}
+
+	origGetBot := getOrCreateBotForTest
+	origSendText := sendTextForTest
+	origSendAttachment := sendAttachmentForTest
+	getOrCreateBotForTest = func(_ *TelegramAdapter, _, _ string) (*tgbotapi.BotAPI, error) {
+		return &tgbotapi.BotAPI{Token: "fake"}, nil
+	}
+	sendTextForTest = func(_ *tgbotapi.BotAPI, _ string, _ string, _ int, _ string) (int64, int, error) {
+		return 123, 1, nil
+	}
+	flushed := 0
+	sendAttachmentForTest = func(_ context.Context, _ *tgbotapi.BotAPI, _ string, _ channel.Attachment, _ string, _ int, _ string, _ assetOpener) error {
+		flushed++
+		return nil
+	}
+	defer func() {
+		getOrCreateBotForTest = origGetBot
+		sendTextForTest = origSendText
+		sendAttachmentForTest = origSendAttachment
+	}()
+
+	if err := stream.Push(context.Background(), channel.StreamEvent{
+		Type: channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{
+			{Type: channel.AttachmentImage, URL: "https://example.com/a.png"},
+			{Type: channel.AttachmentImage, URL: "https://example.com/a.png"},
+		},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(context.Background(), channel.StreamEvent{
+		Type:  channel.StreamEventError,
+		Error: "boom",
+	}); err != nil {
+		t.Fatalf("push error: %v", err)
+	}
+	if flushed != 1 {
+		t.Fatalf("expected exact duplicate buffered attachments to flush once on error, got %d", flushed)
+	}
+}
+
 func TestTelegramOutboundStream_PushErrorEventEmptyNoOp(t *testing.T) {
 	t.Parallel()
 

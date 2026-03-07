@@ -34,6 +34,7 @@ type telegramOutboundStream struct {
 	closed        atomic.Bool
 	mu            sync.Mutex
 	buf           strings.Builder
+	attachments   []channel.Attachment
 	streamChatID  int64
 	streamMsgID   int
 	lastEdited    string
@@ -265,6 +266,35 @@ func (s *telegramOutboundStream) sendPermanentMessage(ctx context.Context, text 
 	return sendTelegramText(bot, s.target, text, replyTo, parseMode)
 }
 
+func (s *telegramOutboundStream) flushBufferedAttachments(ctx context.Context, attachments []channel.Attachment, format channel.MessageFormat) error {
+	if len(attachments) == 0 {
+		return nil
+	}
+	replyTo := parseReplyToMessageID(s.reply)
+	telegramCfg, err := parseConfig(s.cfg.Credentials)
+	if err != nil {
+		return err
+	}
+	bot, err := s.adapter.getOrCreateBot(telegramCfg, s.cfg.ID)
+	if err != nil {
+		return err
+	}
+	parseMode := resolveTelegramParseMode(format)
+	for i, att := range attachments {
+		to := replyTo
+		if i > 0 {
+			to = 0
+		}
+		if err := sendTelegramAttachmentWithAssets(ctx, bot, s.target, att, "", to, parseMode, s.adapter.assets); err != nil && s.adapter.logger != nil {
+			s.adapter.logger.Error("stream final attachment failed", slog.String("config_id", s.cfg.ID), slog.Any("error", err))
+		}
+	}
+	s.mu.Lock()
+	s.attachments = nil
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *telegramOutboundStream) Push(ctx context.Context, event channel.StreamEvent) error {
 	if s == nil || s.adapter == nil {
 		return errors.New("telegram stream not configured")
@@ -322,21 +352,9 @@ func (s *telegramOutboundStream) Push(ctx context.Context, event channel.StreamE
 		if len(event.Attachments) == 0 {
 			return nil
 		}
-		bot, replyTo, err := s.getBotAndReply(ctx)
-		if err != nil {
-			return err
-		}
-		for _, att := range event.Attachments {
-			if sendErr := sendTelegramAttachmentWithAssets(ctx, bot, s.target, att, "", replyTo, "", s.adapter.assets); sendErr != nil {
-				if s.adapter != nil && s.adapter.logger != nil {
-					s.adapter.logger.Warn("telegram: stream attachment send failed",
-						slog.String("config_id", s.cfg.ID),
-						slog.String("type", string(att.Type)),
-						slog.Any("error", sendErr),
-					)
-				}
-			}
-		}
+		s.mu.Lock()
+		s.attachments = append(s.attachments, event.Attachments...)
+		s.mu.Unlock()
 		return nil
 	case channel.StreamEventPhaseStart:
 		return nil
@@ -381,77 +399,48 @@ func (s *telegramOutboundStream) Push(ctx context.Context, event channel.StreamE
 		// (one per assistant output in multi-tool-call responses).
 		s.mu.Lock()
 		bufText := strings.TrimSpace(s.buf.String())
+		bufferedAttachments := append([]channel.Attachment(nil), s.attachments...)
 		if s.isPrivateChat {
 			s.buf.Reset()
 		}
 		s.mu.Unlock()
-		if event.Final == nil || event.Final.Message.IsEmpty() {
-			if bufText != "" {
-				if s.isPrivateChat {
-					if err := s.sendPermanentMessage(ctx, bufText, ""); err != nil {
-						if s.adapter != nil && s.adapter.logger != nil {
-							s.adapter.logger.Warn("telegram: draft final permanent message failed", slog.Any("error", err))
-						}
-					}
-				} else {
-					if err := s.ensureStreamMessage(ctx, bufText); err != nil {
-						if s.adapter != nil && s.adapter.logger != nil {
-							s.adapter.logger.Warn("telegram: ensure stream message failed", slog.Any("error", err))
-						}
-					}
-					if err := s.editStreamMessageFinal(ctx, bufText); err != nil {
-						if s.adapter != nil && s.adapter.logger != nil {
-							s.adapter.logger.Warn("telegram: edit stream message failed", slog.Any("error", err))
-						}
-					}
-				}
-			}
+		msg := channel.Message{}
+		if event.Final != nil {
+			msg = event.Final.Message
+		}
+		mergedAttachments := channel.DeduplicateAttachmentsExact(append(bufferedAttachments, msg.Attachments...))
+		if msg.IsEmpty() && bufText == "" && len(mergedAttachments) == 0 {
 			return nil
 		}
-		msg := event.Final.Message
 		finalText := bufText
 		if finalText == "" && !s.isPrivateChat {
 			finalText = strings.TrimSpace(msg.PlainText())
 		}
-		// Convert markdown to Telegram HTML for the final message.
-		formatted, pm := formatTelegramOutput(finalText, msg.Format)
-		if pm != "" {
-			s.mu.Lock()
-			s.parseMode = pm
-			s.mu.Unlock()
-			finalText = formatted
-		}
-		if s.isPrivateChat {
-			if err := s.sendPermanentMessage(ctx, finalText, s.parseMode); err != nil {
-				return err
+		if finalText != "" {
+			// Convert markdown to Telegram HTML for the final message.
+			formatted, pm := formatTelegramOutput(finalText, msg.Format)
+			if pm != "" {
+				s.mu.Lock()
+				s.parseMode = pm
+				s.mu.Unlock()
+				finalText = formatted
 			}
-		} else {
-			if err := s.ensureStreamMessage(ctx, finalText); err != nil {
-				return err
-			}
-			if err := s.editStreamMessageFinal(ctx, finalText); err != nil {
-				return err
-			}
-		}
-		if len(msg.Attachments) > 0 {
-			replyTo := parseReplyToMessageID(s.reply)
-			telegramCfg, err := parseConfig(s.cfg.Credentials)
-			if err != nil {
-				return err
-			}
-			bot, err := s.adapter.getOrCreateBot(telegramCfg, s.cfg.ID)
-			if err != nil {
-				return err
-			}
-			parseMode := resolveTelegramParseMode(msg.Format)
-			for i, att := range msg.Attachments {
-				to := replyTo
-				if i > 0 {
-					to = 0
+			if s.isPrivateChat {
+				if err := s.sendPermanentMessage(ctx, finalText, s.parseMode); err != nil {
+					return err
 				}
-				if err := sendTelegramAttachmentWithAssets(ctx, bot, s.target, att, "", to, parseMode, s.adapter.assets); err != nil && s.adapter.logger != nil {
-					s.adapter.logger.Error("stream final attachment failed", slog.String("config_id", s.cfg.ID), slog.Any("error", err))
+			} else {
+				if err := s.ensureStreamMessage(ctx, finalText); err != nil {
+					return err
 				}
+				if err := s.editStreamMessageFinal(ctx, finalText); err != nil {
+					return err
+				}
+			}
+		}
+		if len(mergedAttachments) > 0 {
+			if err := s.flushBufferedAttachments(ctx, mergedAttachments, msg.Format); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -462,12 +451,21 @@ func (s *telegramOutboundStream) Push(ctx context.Context, event channel.StreamE
 		}
 		display := "Error: " + errText
 		if s.isPrivateChat {
-			return s.sendPermanentMessage(ctx, display, "")
+			if err := s.sendPermanentMessage(ctx, display, ""); err != nil {
+				return err
+			}
+		} else {
+			if err := s.ensureStreamMessage(ctx, display); err != nil {
+				return err
+			}
+			if err := s.editStreamMessage(ctx, display); err != nil {
+				return err
+			}
 		}
-		if err := s.ensureStreamMessage(ctx, display); err != nil {
-			return err
-		}
-		return s.editStreamMessage(ctx, display)
+		s.mu.Lock()
+		bufferedAttachments := channel.DeduplicateAttachmentsExact(append([]channel.Attachment(nil), s.attachments...))
+		s.mu.Unlock()
+		return s.flushBufferedAttachments(ctx, bufferedAttachments, "")
 	default:
 		return nil
 	}

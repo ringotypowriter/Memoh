@@ -338,15 +338,45 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		_ = stream.Close(context.WithoutCancel(ctx))
 	}()
 
-	// For non-local channels, wrap the stream so events are mirrored to the
-	// RouteHub (and thus to WebUI/CLI subscribers).
-	if p.observer != nil && !isLocalChannelType(msg.Channel) {
-		stream = channel.NewTeeStream(stream, p.observer, strings.TrimSpace(identity.BotID), msg.Channel)
+	// For non-local channels, mirror stream events to RouteHub (WebUI/CLI).
+	// Attachment deltas are buffered for observer delivery until we know the
+	// reply is not suppressed by a current-conversation send/send_message.
+	mirrorEvents := p.observer != nil && !isLocalChannelType(msg.Channel)
+	mirrorBotID := strings.TrimSpace(identity.BotID)
+	var (
+		mirrorAttachmentEvents    []channel.StreamEvent
+		suppressMirrorAttachments bool
+	)
+	if mirrorEvents {
 		// Broadcast the inbound user message so WebUI can display it.
-		p.broadcastInboundMessage(ctx, strings.TrimSpace(identity.BotID), msg, text, identity, resolvedAttachments)
+		p.broadcastInboundMessage(ctx, mirrorBotID, msg, text, identity, resolvedAttachments)
+	}
+	flushMirroredAttachments := func() {
+		if !mirrorEvents || suppressMirrorAttachments || len(mirrorAttachmentEvents) == 0 {
+			return
+		}
+		for _, pending := range mirrorAttachmentEvents {
+			p.observer.OnStreamEvent(ctx, mirrorBotID, msg.Channel, pending)
+		}
+		mirrorAttachmentEvents = nil
+	}
+	pushEvent := func(event channel.StreamEvent) error {
+		err := stream.Push(ctx, event)
+		if mirrorEvents {
+			if event.Type == channel.StreamEventAttachment && len(event.Attachments) > 0 {
+				if !suppressMirrorAttachments {
+					cloned := event
+					cloned.Attachments = append([]channel.Attachment(nil), event.Attachments...)
+					mirrorAttachmentEvents = append(mirrorAttachmentEvents, cloned)
+				}
+			} else {
+				p.observer.OnStreamEvent(ctx, mirrorBotID, msg.Channel, event)
+			}
+		}
+		return err
 	}
 
-	if err := stream.Push(ctx, channel.StreamEvent{
+	if err := pushEvent(channel.StreamEvent{
 		Type:   channel.StreamEventStatus,
 		Status: channel.StreamStatusStarted,
 	}); err != nil {
@@ -361,12 +391,17 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 	// Mutex-protected collector for outbound asset refs. The resolver's
 	// streaming goroutine calls OutboundAssetCollector at persist time.
 	var (
-		assetMu           sync.Mutex
-		outboundAssetRefs []conversation.OutboundAssetRef
+		assetMu                sync.Mutex
+		outboundAssetRefs      []conversation.OutboundAssetRef
+		outboundAssetRefKeys   = make(map[string]struct{})
+		suppressOutboundAssets bool
 	)
 	assetCollector := func() []conversation.OutboundAssetRef {
 		assetMu.Lock()
 		defer assetMu.Unlock()
+		if suppressOutboundAssets {
+			return nil
+		}
 		result := make([]conversation.OutboundAssetRef, len(outboundAssetRefs))
 		copy(result, outboundAssetRefs)
 		return result
@@ -418,33 +453,27 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 				continue
 			}
 			for i, event := range events {
+				if (event.Type == channel.StreamEventToolCallStart || event.Type == channel.StreamEventToolCallEnd) &&
+					shouldSuppressForStreamToolCall(p.registry, event.ToolCall, msg.Channel, target) {
+					assetMu.Lock()
+					suppressOutboundAssets = true
+					outboundAssetRefs = nil
+					clear(outboundAssetRefKeys)
+					assetMu.Unlock()
+					suppressMirrorAttachments = true
+					mirrorAttachmentEvents = nil
+				}
 				if event.Type == channel.StreamEventAttachment && len(event.Attachments) > 0 {
 					ingested := p.ingestOutboundAttachments(ctx, strings.TrimSpace(identity.BotID), event.Attachments)
 					events[i].Attachments = ingested
 					outboundAttachments = append(outboundAttachments, ingested...)
 					assetMu.Lock()
-					for _, att := range ingested {
-						contentHash := strings.TrimSpace(att.ContentHash)
-						if contentHash == "" {
-							continue
-						}
-						ref := conversation.OutboundAssetRef{
-							ContentHash: contentHash,
-							Role:        "attachment",
-							Ordinal:     len(outboundAssetRefs),
-							Mime:        strings.TrimSpace(att.Mime),
-							SizeBytes:   att.Size,
-						}
-						if att.Metadata != nil {
-							if sk, ok := att.Metadata["storage_key"].(string); ok {
-								ref.StorageKey = sk
-							}
-						}
-						outboundAssetRefs = append(outboundAssetRefs, ref)
+					if !suppressOutboundAssets {
+						appendOutboundAssetRefs(&outboundAssetRefs, outboundAssetRefKeys, ingested)
 					}
 					assetMu.Unlock()
 				}
-				if pushErr := stream.Push(ctx, events[i]); pushErr != nil {
+				if pushErr := pushEvent(events[i]); pushErr != nil {
 					streamErr = pushErr
 					break
 				}
@@ -476,7 +505,8 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 				slog.Any("error", streamErr),
 			)
 		}
-		_ = stream.Push(ctx, channel.StreamEvent{
+		flushMirroredAttachments()
+		_ = pushEvent(channel.StreamEvent{
 			Type:  channel.StreamEventError,
 			Error: streamErr.Error(),
 		})
@@ -488,9 +518,16 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		return streamErr
 	}
 
-	sentTexts, suppressReplies := collectMessageToolContext(p.registry, finalMessages, msg.Channel, target)
-	if suppressReplies {
-		if err := stream.Push(ctx, channel.StreamEvent{
+	toolCtx := collectMessageToolContext(p.registry, finalMessages, msg.Channel, target)
+	if toolCtx.suppressesCurrentReply {
+		assetMu.Lock()
+		suppressOutboundAssets = true
+		outboundAssetRefs = nil
+		clear(outboundAssetRefKeys)
+		assetMu.Unlock()
+		suppressMirrorAttachments = true
+		mirrorAttachmentEvents = nil
+		if err := pushEvent(channel.StreamEvent{
 			Type:   channel.StreamEventStatus,
 			Status: channel.StreamStatusCompleted,
 		}); err != nil {
@@ -503,6 +540,7 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		}
 		return nil
 	}
+	flushMirroredAttachments()
 
 	outputs := flow.ExtractAssistantOutputs(finalMessages)
 	attachmentsApplied := false
@@ -515,7 +553,7 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		if isSilentReplyText(plainText) {
 			continue
 		}
-		if isMessagingToolDuplicate(plainText, sentTexts) {
+		if isMessagingToolDuplicate(plainText, toolCtx.sentTexts) {
 			continue
 		}
 		if !attachmentsApplied && len(outboundAttachments) > 0 {
@@ -528,7 +566,7 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 				MessageID: sourceMessageID,
 			}
 		}
-		if err := stream.Push(ctx, channel.StreamEvent{
+		if err := pushEvent(channel.StreamEvent{
 			Type: channel.StreamEventFinal,
 			Final: &channel.StreamFinalizePayload{
 				Message: outMessage,
@@ -542,14 +580,14 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		if sourceMessageID != "" {
 			attachMsg.Reply = &channel.ReplyRef{Target: target, MessageID: sourceMessageID}
 		}
-		if err := stream.Push(ctx, channel.StreamEvent{
+		if err := pushEvent(channel.StreamEvent{
 			Type:  channel.StreamEventFinal,
 			Final: &channel.StreamFinalizePayload{Message: attachMsg},
 		}); err != nil {
 			return err
 		}
 	}
-	if err := stream.Push(ctx, channel.StreamEvent{
+	if err := pushEvent(channel.StreamEvent{
 		Type:   channel.StreamEventStatus,
 		Status: channel.StreamStatusCompleted,
 	}); err != nil {
@@ -561,6 +599,39 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		}
 	}
 	return nil
+}
+
+func appendOutboundAssetRefs(outbound *[]conversation.OutboundAssetRef, seen map[string]struct{}, attachments []channel.Attachment) {
+	if len(attachments) == 0 {
+		return
+	}
+	for _, att := range attachments {
+		contentHash := strings.TrimSpace(att.ContentHash)
+		if contentHash == "" {
+			continue
+		}
+		if seen != nil {
+			if key, ok := channel.ExactAttachmentKey(att); ok {
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+		}
+		ref := conversation.OutboundAssetRef{
+			ContentHash: contentHash,
+			Role:        "attachment",
+			Ordinal:     len(*outbound),
+			Mime:        strings.TrimSpace(att.Mime),
+			SizeBytes:   att.Size,
+		}
+		if att.Metadata != nil {
+			if sk, ok := att.Metadata["storage_key"].(string); ok {
+				ref.StorageKey = sk
+			}
+		}
+		*outbound = append(*outbound, ref)
+	}
 }
 
 func shouldTriggerAssistantResponse(msg channel.InboundMessage) bool {
@@ -1151,12 +1222,16 @@ type sendMessageToolArgs struct {
 	Message           *channel.Message `json:"message"`
 }
 
-func collectMessageToolContext(registry *channel.Registry, messages []conversation.ModelMessage, channelType channel.ChannelType, replyTarget string) ([]string, bool) {
+type messageToolContext struct {
+	sentTexts              []string
+	suppressesCurrentReply bool
+}
+
+func collectMessageToolContext(registry *channel.Registry, messages []conversation.ModelMessage, channelType channel.ChannelType, replyTarget string) messageToolContext {
 	if len(messages) == 0 {
-		return nil, false
+		return messageToolContext{}
 	}
-	var sentTexts []string
-	suppressReplies := false
+	ctx := messageToolContext{}
 	for _, msg := range messages {
 		for _, tc := range msg.ToolCalls {
 			if tc.Function.Name != "send" && tc.Function.Name != "send_message" {
@@ -1166,15 +1241,47 @@ func collectMessageToolContext(registry *channel.Registry, messages []conversati
 			if !parseToolArguments(tc.Function.Arguments, &args) {
 				continue
 			}
-			if text := strings.TrimSpace(extractSendMessageText(args)); text != "" {
-				sentTexts = append(sentTexts, text)
-			}
 			if shouldSuppressForToolCall(registry, args, channelType, replyTarget) {
-				suppressReplies = true
+				ctx.suppressesCurrentReply = true
+				if text := strings.TrimSpace(extractSendMessageText(args)); text != "" {
+					ctx.sentTexts = append(ctx.sentTexts, text)
+				}
 			}
 		}
 	}
-	return sentTexts, suppressReplies
+	return ctx
+}
+
+func shouldSuppressForStreamToolCall(registry *channel.Registry, toolCall *channel.StreamToolCall, channelType channel.ChannelType, replyTarget string) bool {
+	if toolCall == nil {
+		return false
+	}
+	if toolCall.Name != "send" && toolCall.Name != "send_message" {
+		return false
+	}
+	var args sendMessageToolArgs
+	if !parseToolCallInput(toolCall.Input, &args) {
+		return false
+	}
+	return shouldSuppressForToolCall(registry, args, channelType, replyTarget)
+}
+
+func parseToolCallInput(input any, out any) bool {
+	switch v := input.(type) {
+	case nil:
+		return false
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return false
+		}
+		return json.Unmarshal([]byte(v), out) == nil
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return false
+		}
+		return json.Unmarshal(data, out) == nil
+	}
 }
 
 func parseToolArguments(raw string, out any) bool {

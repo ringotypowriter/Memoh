@@ -796,6 +796,7 @@ func editTelegramMessageText(bot *tgbotapi.BotAPI, chatID int64, messageID int, 
 }
 
 var sendDraftForTest func(bot *tgbotapi.BotAPI, chatID int64, draftID int, text string, parseMode string) error
+var sendAttachmentForTest func(ctx context.Context, bot *tgbotapi.BotAPI, target string, att channel.Attachment, caption string, replyTo int, parseMode string, opener assetOpener) error
 
 // sendTelegramDraft calls the sendMessageDraft Bot API method to stream a
 // partial message to a private chat while it is being generated.
@@ -850,6 +851,9 @@ func getTelegramRetryAfter(err error) time.Duration {
 }
 
 func sendTelegramAttachmentWithAssets(ctx context.Context, bot *tgbotapi.BotAPI, target string, att channel.Attachment, caption string, replyTo int, parseMode string, opener assetOpener) error {
+	if sendAttachmentForTest != nil {
+		return sendAttachmentForTest(ctx, bot, target, att, caption, replyTo, parseMode, opener)
+	}
 	return sendTelegramAttachmentImpl(ctx, bot, target, att, caption, replyTo, parseMode, opener)
 }
 

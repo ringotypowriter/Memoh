@@ -83,6 +83,44 @@ func TestQQOutboundStreamFinalUsesExplicitMessageAndBufferedAttachments(t *testi
 	}
 }
 
+func TestQQOutboundStreamDeduplicatesBufferedAndFinalAttachments(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	attachment := channel.Attachment{Type: channel.AttachmentImage, URL: "https://example.com/a.png"}
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{attachment},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{Message: channel.Message{
+			Text:        "done",
+			Attachments: []channel.Attachment{attachment},
+		}},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send, got %d", len(sent))
+	}
+	if got := len(sent[0].Message.Attachments); got != 1 {
+		t.Fatalf("expected deduped attachments, got %d", got)
+	}
+}
+
 func TestQQOutboundStreamFinalPrefersBufferedVisibleText(t *testing.T) {
 	t.Parallel()
 

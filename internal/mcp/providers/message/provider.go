@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/memohai/memoh/internal/channel"
@@ -205,6 +206,7 @@ func (p *Executor) callSend(ctx context.Context, session mcpgw.ToolSessionContex
 			outboundMessage.Attachments = append(outboundMessage.Attachments, resolved...)
 		}
 	}
+	outboundMessage.Attachments = dedupeAttachments(outboundMessage.Attachments)
 
 	if outboundMessage.IsEmpty() {
 		return mcpgw.BuildToolErrorResult("message or attachments required"), nil
@@ -379,6 +381,43 @@ func normalizeAttachmentInputs(raw any) []any {
 	default:
 		return nil
 	}
+}
+
+func dedupeAttachments(attachments []channel.Attachment) []channel.Attachment {
+	if len(attachments) < 2 {
+		return attachments
+	}
+	result := make([]channel.Attachment, 0, len(attachments))
+	seen := make(map[string]struct{}, len(attachments))
+	for i, att := range attachments {
+		key := attachmentDedupKey(att, i)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, att)
+	}
+	return result
+}
+
+func attachmentDedupKey(att channel.Attachment, fallbackIndex int) string {
+	normalized := att
+	normalized.URL = strings.TrimSpace(normalized.URL)
+	normalized.PlatformKey = strings.TrimSpace(normalized.PlatformKey)
+	normalized.SourcePlatform = strings.TrimSpace(normalized.SourcePlatform)
+	normalized.ContentHash = strings.TrimSpace(normalized.ContentHash)
+	normalized.Base64 = strings.TrimSpace(normalized.Base64)
+	normalized.Name = strings.TrimSpace(normalized.Name)
+	normalized.Mime = strings.TrimSpace(normalized.Mime)
+	normalized.Caption = strings.TrimSpace(normalized.Caption)
+
+	// Only exact attachment payload duplicates are safe to collapse. Different
+	// type/caption/name values must remain as distinct outbound sends.
+	data, err := json.Marshal(normalized)
+	if err == nil {
+		return string(data)
+	}
+	return "index:" + strconv.Itoa(fallbackIndex)
 }
 
 // resolveAttachmentRef resolves a single path or URL to a channel.Attachment.

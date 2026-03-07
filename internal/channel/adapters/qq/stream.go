@@ -129,7 +129,7 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 		return nil
 	}
 	if len(bufferedAttachments) > 0 {
-		msg.Attachments = append(bufferedAttachments, msg.Attachments...)
+		msg.Attachments = channel.DeduplicateAttachmentsExact(append(bufferedAttachments, msg.Attachments...))
 	}
 	if msg.Reply == nil && s.reply != nil {
 		msg.Reply = s.reply

@@ -15,16 +15,19 @@ import (
 )
 
 type discordOutboundStream struct {
-	adapter    *DiscordAdapter
-	cfg        channel.ChannelConfig
-	target     string
-	reply      *channel.ReplyRef
-	session    *discordgo.Session
-	closed     atomic.Bool
-	mu         sync.Mutex
-	msgID      string
-	buffer     strings.Builder
-	lastUpdate time.Time
+	adapter     *DiscordAdapter
+	cfg         channel.ChannelConfig
+	target      string
+	reply       *channel.ReplyRef
+	session     *discordgo.Session
+	closed      atomic.Bool
+	mu          sync.Mutex
+	msgID       string
+	buffer      strings.Builder
+	attachments []channel.Attachment
+	lastUpdate  time.Time
+	finalizeFn  func(string) error
+	sendFn      func(context.Context, channel.Attachment) error
 }
 
 func (s *discordOutboundStream) Push(ctx context.Context, event channel.StreamEvent) error {
@@ -63,17 +66,38 @@ func (s *discordOutboundStream) Push(ctx context.Context, event channel.StreamEv
 		return nil
 
 	case channel.StreamEventFinal:
-		if event.Final != nil && !event.Final.Message.IsEmpty() {
-			finalText := strings.TrimSpace(event.Final.Message.PlainText())
-			if finalText != "" {
-				return s.finalizeMessage(finalText)
-			}
+		msg := channel.Message{}
+		if event.Final != nil {
+			msg = event.Final.Message
 		}
 		s.mu.Lock()
-		finalText := strings.TrimSpace(s.buffer.String())
+		bufferedAttachments := append([]channel.Attachment(nil), s.attachments...)
+		bufferedText := strings.TrimSpace(s.buffer.String())
 		s.mu.Unlock()
+		finalText := strings.TrimSpace(msg.PlainText())
+		if finalText == "" {
+			finalText = bufferedText
+		}
 		if finalText != "" {
-			return s.finalizeMessage(finalText)
+			if err := s.finalize(finalText); err != nil {
+				return err
+			}
+		}
+		mergedAttachments := channel.DeduplicateAttachmentsExact(append(bufferedAttachments, msg.Attachments...))
+		if len(mergedAttachments) > 0 {
+			s.mu.Lock()
+			s.attachments = append([]channel.Attachment(nil), mergedAttachments...)
+			s.mu.Unlock()
+		}
+		for _, att := range mergedAttachments {
+			if err := s.deliverAttachment(ctx, att); err != nil {
+				return err
+			}
+			s.mu.Lock()
+			if len(s.attachments) > 0 {
+				s.attachments = append([]channel.Attachment(nil), s.attachments[1:]...)
+			}
+			s.mu.Unlock()
 		}
 		return nil
 
@@ -82,27 +106,31 @@ func (s *discordOutboundStream) Push(ctx context.Context, event channel.StreamEv
 		if errText == "" {
 			return nil
 		}
-		return s.finalizeMessage("Error: " + errText)
+		if err := s.finalize("Error: " + errText); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		bufferedAttachments := append([]channel.Attachment(nil), s.attachments...)
+		s.mu.Unlock()
+		for _, att := range channel.DeduplicateAttachmentsExact(bufferedAttachments) {
+			if err := s.deliverAttachment(ctx, att); err != nil {
+				return err
+			}
+		}
+		if len(bufferedAttachments) > 0 {
+			s.mu.Lock()
+			s.attachments = nil
+			s.mu.Unlock()
+		}
+		return nil
 
 	case channel.StreamEventAttachment:
 		if len(event.Attachments) == 0 {
 			return nil
 		}
-		// Finalize current text message before sending attachments
 		s.mu.Lock()
-		finalText := strings.TrimSpace(s.buffer.String())
+		s.attachments = append(s.attachments, event.Attachments...)
 		s.mu.Unlock()
-		if finalText != "" {
-			if err := s.finalizeMessage(finalText); err != nil {
-				return err
-			}
-		}
-		// Send attachments
-		for _, att := range event.Attachments {
-			if err := s.sendAttachment(ctx, att); err != nil {
-				return err
-			}
-		}
 		return nil
 
 	case channel.StreamEventAgentStart, channel.StreamEventAgentEnd, channel.StreamEventPhaseStart, channel.StreamEventPhaseEnd, channel.StreamEventProcessingStarted, channel.StreamEventProcessingCompleted, channel.StreamEventProcessingFailed, channel.StreamEventToolCallStart, channel.StreamEventToolCallEnd:
@@ -125,6 +153,20 @@ func (s *discordOutboundStream) Close(ctx context.Context) error {
 	}
 	s.closed.Store(true)
 	return nil
+}
+
+func (s *discordOutboundStream) finalize(text string) error {
+	if s.finalizeFn != nil {
+		return s.finalizeFn(text)
+	}
+	return s.finalizeMessage(text)
+}
+
+func (s *discordOutboundStream) deliverAttachment(ctx context.Context, att channel.Attachment) error {
+	if s.sendFn != nil {
+		return s.sendFn(ctx, att)
+	}
+	return s.sendAttachment(ctx, att)
 }
 
 func (s *discordOutboundStream) ensureMessage(text string) error {
