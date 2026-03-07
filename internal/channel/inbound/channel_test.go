@@ -1,6 +1,7 @@
 package inbound
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -224,15 +225,54 @@ func (*fakeMediaIngestor) AccessPath(asset media.Asset) string {
 	return "/data/media/" + asset.StorageKey
 }
 
-type fakeAttachmentResolverAdapter struct{}
+type fakeStorageProvider struct {
+	objects map[string][]byte
+}
 
-func (*fakeAttachmentResolverAdapter) Type() channel.ChannelType {
+func (f *fakeStorageProvider) Put(_ context.Context, key string, reader io.Reader) error {
+	if f.objects == nil {
+		f.objects = make(map[string][]byte)
+	}
+	payload, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	f.objects[key] = payload
+	return nil
+}
+
+func (f *fakeStorageProvider) Open(_ context.Context, key string) (io.ReadCloser, error) {
+	payload, ok := f.objects[key]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return io.NopCloser(bytes.NewReader(payload)), nil
+}
+
+func (f *fakeStorageProvider) Delete(_ context.Context, key string) error {
+	delete(f.objects, key)
+	return nil
+}
+
+func (*fakeStorageProvider) AccessPath(key string) string {
+	return "/data/media/" + key
+}
+
+type fakeAttachmentResolverAdapter struct {
+	typ     channel.ChannelType
+	payload channel.AttachmentPayload
+}
+
+func (f *fakeAttachmentResolverAdapter) Type() channel.ChannelType {
+	if f != nil && strings.TrimSpace(f.typ.String()) != "" {
+		return f.typ
+	}
 	return channel.ChannelType("resolver-test")
 }
 
-func (*fakeAttachmentResolverAdapter) Descriptor() channel.Descriptor {
+func (f *fakeAttachmentResolverAdapter) Descriptor() channel.Descriptor {
 	return channel.Descriptor{
-		Type:        channel.ChannelType("resolver-test"),
+		Type:        f.Type(),
 		DisplayName: "ResolverTest",
 		Capabilities: channel.ChannelCapabilities{
 			Text:        true,
@@ -241,7 +281,10 @@ func (*fakeAttachmentResolverAdapter) Descriptor() channel.Descriptor {
 	}
 }
 
-func (*fakeAttachmentResolverAdapter) ResolveAttachment(_ context.Context, _ channel.ChannelConfig, _ channel.Attachment) (channel.AttachmentPayload, error) {
+func (f *fakeAttachmentResolverAdapter) ResolveAttachment(_ context.Context, _ channel.ChannelConfig, _ channel.Attachment) (channel.AttachmentPayload, error) {
+	if f != nil && f.payload.Reader != nil {
+		return f.payload, nil
+	}
 	return channel.AttachmentPayload{
 		Reader: io.NopCloser(strings.NewReader("resolver-bytes")),
 		Mime:   "application/octet-stream",
@@ -785,7 +828,7 @@ func TestChannelInboundProcessorIngestsBase64Attachment(t *testing.T) {
 	}
 }
 
-func TestChannelInboundProcessorIngestsQQFileAttachmentWithOriginalExt(t *testing.T) {
+func TestChannelInboundProcessorIngestsQQFileAttachmentKeepsOriginalExtWhenMimeGeneric(t *testing.T) {
 	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-qq-file"}}
 	memberSvc := &fakeMemberService{isMember: true}
 	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-qq-file", RouteID: "route-qq-file"}}
@@ -796,16 +839,20 @@ func TestChannelInboundProcessorIngestsQQFileAttachmentWithOriginalExt(t *testin
 			},
 		},
 	}
-	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
-	mediaSvc := &fakeMediaIngestor{nextID: "asset-qq-file-1", nextMime: "text/plain"}
+	registry := channel.NewRegistry()
+	registry.MustRegister(&fakeAttachmentResolverAdapter{
+		typ: channel.ChannelType("qq"),
+		payload: channel.AttachmentPayload{
+			Reader: io.NopCloser(bytes.NewReader([]byte{0x00, 0x01, 0x02, 0x03, 0x04})),
+			Mime:   "application/octet-stream",
+			Size:   5,
+		},
+	})
+	processor := NewChannelInboundProcessor(slog.Default(), registry, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	storage := &fakeStorageProvider{}
+	mediaSvc := media.NewService(slog.Default(), storage)
 	processor.SetMediaService(mediaSvc)
 	sender := &fakeReplySender{}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "# hello\n")
-	}))
-	defer server.Close()
 
 	cfg := channel.ChannelConfig{ID: "cfg-qq-file", BotID: "bot-1", ChannelType: channel.ChannelType("qq")}
 	msg := channel.InboundMessage{
@@ -816,10 +863,10 @@ func TestChannelInboundProcessorIngestsQQFileAttachmentWithOriginalExt(t *testin
 			Text: "[User sent 1 attachment]",
 			Attachments: []channel.Attachment{
 				{
-					Type: channel.AttachmentFile,
-					URL:  server.URL + "/yachiyo_baike.md",
-					Name: "yachiyo_baike.md",
-					Mime: "file",
+					Type:        channel.AttachmentFile,
+					PlatformKey: "qq-file-1",
+					Name:        "test.md",
+					Mime:        "file",
 				},
 			},
 		},
@@ -834,17 +881,15 @@ func TestChannelInboundProcessorIngestsQQFileAttachmentWithOriginalExt(t *testin
 	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if mediaSvc.calls != 1 {
-		t.Fatalf("expected media ingest to be called once, got %d", mediaSvc.calls)
+	if len(gateway.gotReq.Attachments) != 1 {
+		t.Fatalf("expected one attachment in gateway request, got %d", len(gateway.gotReq.Attachments))
 	}
-	if len(mediaSvc.inputs) != 1 {
-		t.Fatalf("expected one ingest input, got %d", len(mediaSvc.inputs))
+	storageKey, _ := gateway.gotReq.Attachments[0].Metadata["storage_key"].(string)
+	if !strings.HasSuffix(storageKey, ".md") {
+		t.Fatalf("expected storage key to keep .md extension, got %q", storageKey)
 	}
-	if got := mediaSvc.inputs[0].OriginalExt; got != ".md" {
-		t.Fatalf("expected original ext .md, got %q", got)
-	}
-	if got := mediaSvc.inputs[0].Mime; got != "text/plain" {
-		t.Fatalf("expected sniffed mime text/plain, got %q", got)
+	if strings.HasSuffix(storageKey, ".bin") {
+		t.Fatalf("expected storage key to avoid .bin fallback, got %q", storageKey)
 	}
 }
 

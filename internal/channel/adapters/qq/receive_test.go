@@ -269,7 +269,7 @@ func TestHandleGatewayClose_IntentCodesRequireReconnect(t *testing.T) {
 	session := sessionState{
 		SessionID:   "session-1",
 		LastSeq:     42,
-		IntentLevel: 1,
+		IntentLevel: 0,
 	}
 
 	healthy, err := adapter.handleGatewayClose(
@@ -291,6 +291,9 @@ func TestHandleGatewayClose_IntentCodesRequireReconnect(t *testing.T) {
 	if session.SessionID != "" || session.LastSeq != 0 {
 		t.Fatalf("session should be reset, got id=%q seq=%d", session.SessionID, session.LastSeq)
 	}
+	if session.IntentLevel != 1 {
+		t.Fatalf("expected intent fallback level 1, got %d", session.IntentLevel)
+	}
 
 	saved := adapter.loadSession("cfg-intent")
 	if saved.SessionID != "" || saved.LastSeq != 0 {
@@ -298,5 +301,30 @@ func TestHandleGatewayClose_IntentCodesRequireReconnect(t *testing.T) {
 	}
 	if saved.IntentLevel != session.IntentLevel {
 		t.Fatalf("unexpected intent level: %d", saved.IntentLevel)
+	}
+}
+
+func TestAdjustSessionAfterIntentCloseCapsIntentLevel(t *testing.T) {
+	t.Parallel()
+
+	adapter := NewQQAdapter(nil)
+	session := sessionState{
+		SessionID:   "session-2",
+		LastSeq:     99,
+		IntentLevel: len(qqIntentLevels) - 1,
+	}
+
+	adapter.adjustSessionAfterIntentClose("cfg-intent-cap", &session)
+
+	if session.SessionID != "" || session.LastSeq != 0 {
+		t.Fatalf("session should be reset, got id=%q seq=%d", session.SessionID, session.LastSeq)
+	}
+	if session.IntentLevel != len(qqIntentLevels)-1 {
+		t.Fatalf("expected capped intent level %d, got %d", len(qqIntentLevels)-1, session.IntentLevel)
+	}
+
+	saved := adapter.loadSession("cfg-intent-cap")
+	if saved.IntentLevel != len(qqIntentLevels)-1 {
+		t.Fatalf("unexpected saved intent level: %d", saved.IntentLevel)
 	}
 }

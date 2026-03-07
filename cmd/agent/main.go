@@ -180,7 +180,6 @@ func runServe() {
 			provideRouteService,
 			provideMessageService,
 			provideMediaService,
-			qq.ProvideQQAdapter,
 
 			// channel infrastructure
 			local.NewRouteHub,
@@ -376,7 +375,7 @@ func provideChatResolver(log *slog.Logger, cfg config.Config, modelsService *mod
 // channel providers
 // ---------------------------------------------------------------------------
 
-func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService *media.Service, qqAdapter channel.Adapter) *channel.Registry {
+func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService *media.Service) *channel.Registry {
 	registry := channel.NewRegistry()
 
 	// Telegram
@@ -389,6 +388,8 @@ func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService 
 	discordAdapter.SetAssetOpener(mediaService)
 	registry.MustRegister(discordAdapter)
 
+	qqAdapter := qq.NewQQAdapter(log)
+	qqAdapter.SetAssetOpener(mediaService)
 	registry.MustRegister(qqAdapter)
 
 	registry.MustRegister(feishu.NewFeishuAdapter(log))
@@ -413,6 +414,17 @@ func provideChannelRouter(
 	inboxService *inbox.Service,
 	rc *boot.RuntimeConfig,
 ) *inbound.ChannelInboundProcessor {
+	adapter, ok := registry.Get(qq.Type)
+	if !ok {
+		panic("qq adapter not registered")
+	}
+	qqAdapter, ok := adapter.(*qq.QQAdapter)
+	if !ok {
+		panic("qq adapter has unexpected type")
+	}
+	qqAdapter.SetChannelIdentityResolver(identityService)
+	qqAdapter.SetRouteResolver(routeService)
+
 	processor := inbound.NewChannelInboundProcessor(log, registry, routeService, msgService, resolver, identityService, botService, policyService, preauthService, bindService, rc.JwtSecret, 5*time.Minute)
 	processor.SetMediaService(mediaService)
 	processor.SetStreamObserver(local.NewRouteHubBroadcaster(hub))

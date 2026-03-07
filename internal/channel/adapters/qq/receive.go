@@ -247,7 +247,7 @@ func (a *QQAdapter) handleGatewayClose(configID string, client *qqClient, sessio
 	case 4006, 4007, 4009:
 		a.clearSession(configID)
 	case 4914, 4915:
-		a.adjustSessionAfterInvalid(configID, session)
+		a.adjustSessionAfterIntentClose(configID, session)
 		return healthySession, fmt.Errorf("qq gateway closed with intent code %d", closeErr.Code)
 	}
 	return healthySession, closeErr
@@ -369,6 +369,22 @@ func runHeartbeat(ctx context.Context, writer *gatewayWriter, ticker *time.Ticke
 func (a *QQAdapter) adjustSessionAfterInvalid(configID string, session *sessionState) {
 	session.SessionID = ""
 	session.LastSeq = 0
+	a.saveSession(configID, *session)
+}
+
+func (a *QQAdapter) adjustSessionAfterIntentClose(configID string, session *sessionState) {
+	session.SessionID = ""
+	session.LastSeq = 0
+	if last := len(qqIntentLevels) - 1; last >= 0 {
+		switch {
+		case session.IntentLevel < 0:
+			session.IntentLevel = 0
+		case session.IntentLevel < last:
+			session.IntentLevel++
+		default:
+			session.IntentLevel = last
+		}
+	}
 	a.saveSession(configID, *session)
 }
 
