@@ -1,4 +1,4 @@
-# Web Frontend (packages/web)
+# Web Frontend (apps/web)
 
 ## Overview
 
