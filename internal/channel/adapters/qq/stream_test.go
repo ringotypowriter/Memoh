@@ -83,6 +83,91 @@ func TestQQOutboundStreamFinalUsesExplicitMessageAndBufferedAttachments(t *testi
 	}
 }
 
+func TestQQOutboundStreamDeduplicatesBufferedAndFinalAttachments(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	att := channel.Attachment{Type: channel.AttachmentFile, URL: "/data/media/tool/file.txt"}
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{att},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{Message: channel.Message{
+			Text:        "done",
+			Attachments: []channel.Attachment{att},
+		}},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send, got %d", len(sent))
+	}
+	if len(sent[0].Message.Attachments) != 1 {
+		t.Fatalf("expected exact duplicate attachments to be collapsed, got %d", len(sent[0].Message.Attachments))
+	}
+}
+
+func TestQQOutboundStreamSkipsAttachmentsAlreadySentByMessageTool(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{{
+			Type: channel.AttachmentFile,
+			Metadata: map[string]any{
+				"storage_key": "tool/file.txt",
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{Message: channel.Message{
+			Text: "done",
+			Metadata: map[string]any{
+				"tool_sent_attachment_keys": []any{"storage:tool/file.txt"},
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send, got %d", len(sent))
+	}
+	if sent[0].Message.PlainText() != "done" {
+		t.Fatalf("unexpected text: %q", sent[0].Message.PlainText())
+	}
+	if len(sent[0].Message.Attachments) != 0 {
+		t.Fatalf("expected tool-sent attachments to be filtered, got %d", len(sent[0].Message.Attachments))
+	}
+}
+
 func TestQQOutboundStreamFinalPrefersBufferedVisibleText(t *testing.T) {
 	t.Parallel()
 

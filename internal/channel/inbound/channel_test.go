@@ -23,10 +23,11 @@ import (
 )
 
 type fakeChatGateway struct {
-	resp   conversation.ChatResponse
-	err    error
-	gotReq conversation.ChatRequest
-	onChat func(conversation.ChatRequest)
+	resp         conversation.ChatResponse
+	err          error
+	gotReq       conversation.ChatRequest
+	onChat       func(conversation.ChatRequest)
+	streamChunks []conversation.StreamChunk
 }
 
 func (f *fakeChatGateway) Chat(_ context.Context, req conversation.ChatRequest) (conversation.ChatResponse, error) {
@@ -42,10 +43,22 @@ func (f *fakeChatGateway) StreamChat(_ context.Context, req conversation.ChatReq
 	if f.onChat != nil {
 		f.onChat(req)
 	}
-	chunks := make(chan conversation.StreamChunk, 1)
+	chunkCap := len(f.streamChunks)
+	if chunkCap < 1 {
+		chunkCap = 1
+	}
+	chunks := make(chan conversation.StreamChunk, chunkCap)
 	errs := make(chan error, 1)
 	if f.err != nil {
 		errs <- f.err
+		close(chunks)
+		close(errs)
+		return chunks, errs
+	}
+	if len(f.streamChunks) > 0 {
+		for _, chunk := range f.streamChunks {
+			chunks <- chunk
+		}
 		close(chunks)
 		close(errs)
 		return chunks, errs
@@ -105,6 +118,15 @@ func (s *fakeOutboundStream) Push(_ context.Context, event channel.StreamEvent) 
 
 func (*fakeOutboundStream) Close(_ context.Context) error {
 	return nil
+}
+
+func mustStreamChunk(t *testing.T, payload any) conversation.StreamChunk {
+	t.Helper()
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal stream chunk: %v", err)
+	}
+	return conversation.StreamChunk(data)
 }
 
 type fakeProcessingStatusNotifier struct {
@@ -741,6 +763,92 @@ func TestChannelInboundProcessorPersistsAttachmentAssetRefs(t *testing.T) {
 	}
 	if got := gateway.gotReq.Attachments[0].ContentHash; got != "asset-1" {
 		t.Fatalf("expected gateway attachment content_hash asset-1, got %q", got)
+	}
+}
+
+func TestChannelInboundProcessorMarksQQToolSentAttachmentKeysOnFinal(t *testing.T) {
+	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-qq-tool-attachments"}}
+	memberSvc := &fakeMemberService{isMember: true}
+	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-qq-tool-attachments", RouteID: "route-qq-tool-attachments"}}
+	argsJSON, err := json.Marshal(map[string]any{
+		"platform": "qq",
+		"target":   "group:external-target",
+		"attachments": []any{
+			"/data/media/tool/file.txt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+	gateway := &fakeChatGateway{
+		streamChunks: []conversation.StreamChunk{
+			mustStreamChunk(t, map[string]any{
+				"type": "attachment_delta",
+				"attachments": []map[string]any{
+					{
+						"type": "file",
+						"path": "/data/media/tool/file.txt",
+						"name": "file.txt",
+					},
+				},
+			}),
+			mustStreamChunk(t, map[string]any{
+				"type": "agent_end",
+				"messages": []conversation.ModelMessage{
+					{
+						Role:    "assistant",
+						Content: conversation.NewTextContent("done"),
+						ToolCalls: []conversation.ToolCall{
+							{
+								Type: "function",
+								Function: conversation.ToolCallFunction{
+									Name:      "send",
+									Arguments: string(argsJSON),
+								},
+							},
+						},
+					},
+				},
+			}),
+		},
+	}
+	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
+	sender := &fakeReplySender{}
+
+	cfg := channel.ChannelConfig{ID: "cfg-qq-tool-attachments", BotID: "bot-1", ChannelType: channel.ChannelType("qq")}
+	msg := channel.InboundMessage{
+		BotID:       "bot-1",
+		Channel:     channel.ChannelType("qq"),
+		Message:     channel.Message{ID: "msg-qq-tool-attachments-1", Text: "hello"},
+		ReplyTarget: "c2c:user-openid",
+		Sender:      channel.Identity{SubjectID: "qq-user"},
+		Conversation: channel.Conversation{
+			ID:   "qq-user",
+			Type: "p2p",
+		},
+	}
+
+	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var finalEvent *channel.StreamEvent
+	for i := range sender.events {
+		event := sender.events[i]
+		if event.Type == channel.StreamEventFinal && event.Final != nil {
+			finalEvent = &event
+			break
+		}
+	}
+	if finalEvent == nil {
+		t.Fatal("expected final stream event")
+	}
+	rawKeys, ok := finalEvent.Final.Message.Metadata["tool_sent_attachment_keys"].([]any)
+	if !ok {
+		t.Fatalf("expected tool_sent_attachment_keys metadata, got %+v", finalEvent.Final.Message.Metadata)
+	}
+	if len(rawKeys) != 2 {
+		t.Fatalf("expected two tool attachment match keys, got %d (%v)", len(rawKeys), rawKeys)
 	}
 }
 

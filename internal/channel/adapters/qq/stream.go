@@ -3,6 +3,8 @@ package qq
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,8 +130,12 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 	} else if alreadySentText && len(bufferedAttachments) == 0 && len(msg.Attachments) == 0 && strings.TrimSpace(msg.PlainText()) != "" {
 		return nil
 	}
-	if len(bufferedAttachments) > 0 {
-		msg.Attachments = append(bufferedAttachments, msg.Attachments...)
+	toolSentKeys := parseToolSentAttachmentKeys(msg.Metadata)
+	if len(bufferedAttachments) > 0 || len(msg.Attachments) > 0 {
+		msg.Attachments = deduplicateQQAttachmentsExact(append(
+			filterQQToolDuplicateAttachments(bufferedAttachments, toolSentKeys),
+			filterQQToolDuplicateAttachments(msg.Attachments, toolSentKeys)...,
+		))
 	}
 	if msg.Reply == nil && s.reply != nil {
 		msg.Reply = s.reply
@@ -149,4 +155,163 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 		s.mu.Unlock()
 	}
 	return nil
+}
+
+func parseToolSentAttachmentKeys(metadata map[string]any) map[string]struct{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, ok := metadata["tool_sent_attachment_keys"]
+	if !ok || raw == nil {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	switch value := raw.(type) {
+	case []any:
+		for _, item := range value {
+			key := strings.TrimSpace(itemToString(item))
+			if key != "" {
+				keys[key] = struct{}{}
+			}
+		}
+	case []string:
+		for _, item := range value {
+			key := strings.TrimSpace(item)
+			if key != "" {
+				keys[key] = struct{}{}
+			}
+		}
+	case string:
+		key := strings.TrimSpace(value)
+		if key != "" {
+			keys[key] = struct{}{}
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
+func filterQQToolDuplicateAttachments(attachments []channel.Attachment, toolSentKeys map[string]struct{}) []channel.Attachment {
+	if len(attachments) == 0 || len(toolSentKeys) == 0 {
+		return attachments
+	}
+	filtered := make([]channel.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		if qqAttachmentMatchesToolSentKeys(att, toolSentKeys) {
+			continue
+		}
+		filtered = append(filtered, att)
+	}
+	return filtered
+}
+
+func qqAttachmentMatchesToolSentKeys(att channel.Attachment, toolSentKeys map[string]struct{}) bool {
+	for _, key := range qqAttachmentMatchKeys(att) {
+		if _, ok := toolSentKeys[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func qqAttachmentMatchKeys(att channel.Attachment) []string {
+	keys := make([]string, 0, 4)
+	if contentHash := strings.TrimSpace(att.ContentHash); contentHash != "" {
+		keys = append(keys, "hash:"+contentHash)
+	}
+	if storageKey := qqAttachmentStorageKey(att); storageKey != "" {
+		keys = append(keys, "storage:"+storageKey)
+	}
+	if ref := strings.TrimSpace(att.URL); ref != "" {
+		keys = append(keys, "ref:"+ref)
+		if storageKey := qqExtractStorageKey(ref); storageKey != "" {
+			keys = append(keys, "storage:"+storageKey)
+		}
+	}
+	if platformKey := strings.TrimSpace(att.PlatformKey); platformKey != "" {
+		keys = append(keys, "platform:"+platformKey)
+	}
+	return keys
+}
+
+func qqAttachmentStorageKey(att channel.Attachment) string {
+	if att.Metadata == nil {
+		return ""
+	}
+	if storageKey, ok := att.Metadata["storage_key"].(string); ok {
+		return strings.TrimSpace(storageKey)
+	}
+	return ""
+}
+
+func qqExtractStorageKey(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	marker := "/data/media/"
+	idx := strings.Index(ref, marker)
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(ref[idx+len(marker):])
+}
+
+func deduplicateQQAttachmentsExact(attachments []channel.Attachment) []channel.Attachment {
+	if len(attachments) < 2 {
+		return attachments
+	}
+	seen := make(map[string]struct{}, len(attachments))
+	deduped := make([]channel.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		key := qqExactAttachmentKey(att)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		deduped = append(deduped, att)
+	}
+	return deduped
+}
+
+func qqExactAttachmentKey(att channel.Attachment) string {
+	var b strings.Builder
+	b.Grow(256)
+	b.WriteString(strings.TrimSpace(string(att.Type)))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.URL))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.PlatformKey))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.ContentHash))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.Base64))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.Name))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.Mime))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.Caption))
+	b.WriteString("|")
+	b.WriteString(strconv.FormatInt(att.Size, 10))
+	b.WriteString("|")
+	b.WriteString(strconv.FormatInt(att.DurationMs, 10))
+	b.WriteString("|")
+	b.WriteString(strconv.Itoa(att.Width))
+	b.WriteString("|")
+	b.WriteString(strconv.Itoa(att.Height))
+	b.WriteString("|")
+	b.WriteString(strings.TrimSpace(att.ThumbnailURL))
+	return b.String()
+}
+
+func itemToString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
 }

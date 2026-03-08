@@ -488,8 +488,8 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		return streamErr
 	}
 
-	sentTexts, suppressReplies := collectMessageToolContext(p.registry, finalMessages, msg.Channel, target)
-	if suppressReplies {
+	toolCtx := collectMessageToolContext(p.registry, finalMessages, msg.Channel, target)
+	if toolCtx.suppressReplies {
 		if err := stream.Push(ctx, channel.StreamEvent{
 			Type:   channel.StreamEventStatus,
 			Status: channel.StreamStatusCompleted,
@@ -515,11 +515,12 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		if isSilentReplyText(plainText) {
 			continue
 		}
-		if isMessagingToolDuplicate(plainText, sentTexts) {
+		if isMessagingToolDuplicate(plainText, toolCtx.sentTexts) {
 			continue
 		}
 		if !attachmentsApplied && len(outboundAttachments) > 0 {
 			outMessage.Attachments = append(outMessage.Attachments, outboundAttachments...)
+			attachToolAttachmentMetadata(&outMessage, toolCtx.sentAttachmentKeys)
 			attachmentsApplied = true
 		}
 		if outMessage.Reply == nil && sourceMessageID != "" {
@@ -539,6 +540,7 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 	}
 	if !attachmentsApplied && len(outboundAttachments) > 0 {
 		attachMsg := channel.Message{Attachments: outboundAttachments}
+		attachToolAttachmentMetadata(&attachMsg, toolCtx.sentAttachmentKeys)
 		if sourceMessageID != "" {
 			attachMsg.Reply = &channel.ReplyRef{Target: target, MessageID: sourceMessageID}
 		}
@@ -1148,15 +1150,22 @@ type sendMessageToolArgs struct {
 	Target            string           `json:"target"`
 	ChannelIdentityID string           `json:"channel_identity_id"`
 	Text              string           `json:"text"`
+	Attachments       any              `json:"attachments"`
 	Message           *channel.Message `json:"message"`
 }
 
-func collectMessageToolContext(registry *channel.Registry, messages []conversation.ModelMessage, channelType channel.ChannelType, replyTarget string) ([]string, bool) {
+type messageToolContext struct {
+	sentTexts          []string
+	sentAttachmentKeys []string
+	suppressReplies    bool
+}
+
+func collectMessageToolContext(registry *channel.Registry, messages []conversation.ModelMessage, channelType channel.ChannelType, replyTarget string) messageToolContext {
 	if len(messages) == 0 {
-		return nil, false
+		return messageToolContext{}
 	}
-	var sentTexts []string
-	suppressReplies := false
+	ctx := messageToolContext{}
+	seenAttachmentKeys := make(map[string]struct{})
 	for _, msg := range messages {
 		for _, tc := range msg.ToolCalls {
 			if tc.Function.Name != "send" && tc.Function.Name != "send_message" {
@@ -1167,14 +1176,15 @@ func collectMessageToolContext(registry *channel.Registry, messages []conversati
 				continue
 			}
 			if text := strings.TrimSpace(extractSendMessageText(args)); text != "" {
-				sentTexts = append(sentTexts, text)
+				ctx.sentTexts = append(ctx.sentTexts, text)
 			}
+			appendUniqueToolAttachmentKeys(&ctx.sentAttachmentKeys, seenAttachmentKeys, extractSendMessageAttachmentKeys(args))
 			if shouldSuppressForToolCall(registry, args, channelType, replyTarget) {
-				suppressReplies = true
+				ctx.suppressReplies = true
 			}
 		}
 	}
-	return sentTexts, suppressReplies
+	return ctx
 }
 
 func parseToolArguments(raw string, out any) bool {
@@ -1202,6 +1212,136 @@ func extractSendMessageText(args sendMessageToolArgs) string {
 		return ""
 	}
 	return strings.TrimSpace(args.Message.PlainText())
+}
+
+func extractSendMessageAttachmentKeys(args sendMessageToolArgs) []string {
+	keys := make([]string, 0)
+	seen := make(map[string]struct{})
+	if args.Message != nil {
+		for _, att := range args.Message.Attachments {
+			appendUniqueToolAttachmentKeys(&keys, seen, attachmentMatchKeys(att))
+		}
+	}
+	for _, item := range normalizeToolAttachmentInputs(args.Attachments) {
+		appendUniqueToolAttachmentKeys(&keys, seen, toolAttachmentInputKeys(item))
+	}
+	return keys
+}
+
+func normalizeToolAttachmentInputs(raw any) []any {
+	switch value := raw.(type) {
+	case nil:
+		return nil
+	case []any:
+		return value
+	case []string:
+		items := make([]any, 0, len(value))
+		for _, item := range value {
+			items = append(items, item)
+		}
+		return items
+	case string, map[string]any:
+		return []any{value}
+	default:
+		return nil
+	}
+}
+
+func toolAttachmentInputKeys(raw any) []string {
+	switch value := raw.(type) {
+	case string:
+		return attachmentReferenceKeys(value)
+	case map[string]any:
+		keys := make([]string, 0, 4)
+		if contentHash := strings.TrimSpace(fmt.Sprint(value["content_hash"])); contentHash != "" && contentHash != "<nil>" {
+			keys = append(keys, "hash:"+contentHash)
+		}
+		if path := strings.TrimSpace(fmt.Sprint(value["path"])); path != "" && path != "<nil>" {
+			keys = append(keys, attachmentReferenceKeys(path)...)
+		}
+		if url := strings.TrimSpace(fmt.Sprint(value["url"])); url != "" && url != "<nil>" {
+			keys = append(keys, attachmentReferenceKeys(url)...)
+		}
+		return keys
+	default:
+		return nil
+	}
+}
+
+func appendUniqueToolAttachmentKeys(dst *[]string, seen map[string]struct{}, keys []string) {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		*dst = append(*dst, key)
+	}
+}
+
+func attachmentMatchKeys(att channel.Attachment) []string {
+	keys := make([]string, 0, 4)
+	if contentHash := strings.TrimSpace(att.ContentHash); contentHash != "" {
+		keys = append(keys, "hash:"+contentHash)
+	}
+	if storageKey := attachmentStorageKey(att); storageKey != "" {
+		keys = append(keys, "storage:"+storageKey)
+	}
+	if ref := strings.TrimSpace(att.URL); ref != "" {
+		keys = append(keys, attachmentReferenceKeys(ref)...)
+	}
+	if platformKey := strings.TrimSpace(att.PlatformKey); platformKey != "" {
+		keys = append(keys, "platform:"+platformKey)
+	}
+	return keys
+}
+
+func attachmentStorageKey(att channel.Attachment) string {
+	if att.Metadata == nil {
+		return ""
+	}
+	if storageKey, ok := att.Metadata["storage_key"].(string); ok {
+		return strings.TrimSpace(storageKey)
+	}
+	return ""
+}
+
+func attachmentReferenceKeys(ref string) []string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	keys := []string{"ref:" + ref}
+	if storageKey := extractStorageKey(ref, ""); storageKey != "" {
+		keys = append(keys, "storage:"+storageKey)
+	}
+	if isHTTPURL(ref) {
+		keys = append(keys, "url:"+ref)
+	}
+	return keys
+}
+
+func attachToolAttachmentMetadata(msg *channel.Message, keys []string) {
+	if msg == nil || len(keys) == 0 {
+		return
+	}
+	if msg.Metadata == nil {
+		msg.Metadata = make(map[string]any)
+	}
+	values := make([]any, 0, len(keys))
+	for _, key := range keys {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		values = append(values, key)
+	}
+	if len(values) == 0 {
+		return
+	}
+	msg.Metadata["tool_sent_attachment_keys"] = values
 }
 
 func shouldSuppressForToolCall(registry *channel.Registry, args sendMessageToolArgs, channelType channel.ChannelType, replyTarget string) bool {
