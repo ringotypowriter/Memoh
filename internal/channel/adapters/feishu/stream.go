@@ -29,6 +29,7 @@ type feishuOutboundStream struct {
 	cfg           channel.ChannelConfig
 	target        string
 	reply         *channel.ReplyRef
+	send          func(context.Context, channel.OutboundMessage) error
 	client        *lark.Client
 	receiveID     string
 	receiveType   string
@@ -37,11 +38,14 @@ type feishuOutboundStream struct {
 	lastPatchedAt time.Time
 	lastPatched   string
 	patchInterval time.Duration
+	attachments   []channel.Attachment
+	toolSentKeys  map[string]struct{}
+	sawFinal      bool
 	closed        atomic.Bool
 }
 
 func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEvent) error {
-	if s == nil || s.adapter == nil {
+	if s == nil || (s.adapter == nil && s.send == nil) {
 		return errors.New("feishu stream not configured")
 	}
 	if s.closed.Load() {
@@ -57,6 +61,9 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		if event.Status == channel.StreamStatusStarted {
 			return s.ensureCard(ctx, feishuStreamThinkingText)
 		}
+		if event.Status == channel.StreamStatusCompleted && !s.sawFinal {
+			s.attachments = nil
+		}
 		return nil
 	case channel.StreamEventDelta:
 		if event.Delta == "" || event.Phase == channel.StreamPhaseReasoning {
@@ -71,6 +78,7 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		}
 		return s.patchCard(ctx, s.textBuffer.String())
 	case channel.StreamEventToolCallStart:
+		s.rememberToolCallAttachments(event.ToolCall)
 		bufText := strings.TrimSpace(s.textBuffer.String())
 		if s.cardMessageID != "" && bufText != "" {
 			_ = s.patchCard(ctx, bufText)
@@ -81,31 +89,33 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		s.textBuffer.Reset()
 		return nil
 	case channel.StreamEventToolCallEnd:
+		s.rememberToolCallAttachments(event.ToolCall)
 		s.cardMessageID = ""
 		s.lastPatched = ""
 		s.lastPatchedAt = time.Time{}
 		s.textBuffer.Reset()
 		return nil
 	case channel.StreamEventAttachment:
-		if len(event.Attachments) == 0 {
+		attachments := s.filterToolDuplicateAttachments(event.Attachments, nil)
+		if len(attachments) == 0 {
 			return nil
 		}
-		media := channel.Message{
-			Attachments: event.Attachments,
-		}
-		return s.adapter.Send(ctx, s.cfg, channel.OutboundMessage{
-			Target:  s.target,
-			Message: media,
-		})
+		s.attachments = append(s.attachments, attachments...)
+		return nil
 	case channel.StreamEventPhaseStart, channel.StreamEventPhaseEnd:
 		return nil
 	case channel.StreamEventAgentStart, channel.StreamEventAgentEnd, channel.StreamEventProcessingStarted, channel.StreamEventProcessingCompleted, channel.StreamEventProcessingFailed:
 		return nil
 	case channel.StreamEventFinal:
-		if event.Final == nil || event.Final.Message.IsEmpty() {
+		if event.Final == nil {
 			return nil
 		}
+		s.sawFinal = true
 		msg := event.Final.Message
+		msg.Attachments = s.mergeBufferedAttachments(msg.Attachments, msg.Metadata)
+		if msg.IsEmpty() {
+			return nil
+		}
 		bufText := strings.TrimSpace(s.textBuffer.String())
 		finalText := bufText
 		if finalText == "" {
@@ -126,21 +136,25 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 			media.Parts = nil
 			media.Actions = nil
 			media.Reply = nil
-			return s.adapter.Send(ctx, s.cfg, channel.OutboundMessage{
+			if err := s.sendMessage(ctx, channel.OutboundMessage{
 				Target:  s.target,
 				Message: media,
-			})
+			}); err != nil {
+				return err
+			}
 		}
 		return nil
 	case channel.StreamEventError:
 		errText := strings.TrimSpace(event.Error)
-		if errText == "" {
-			return nil
+		var patchErr error
+		if errText != "" {
+			if err := s.ensureCard(ctx, feishuStreamThinkingText); err != nil {
+				patchErr = err
+			} else if err := s.patchCard(ctx, "Error: "+errText); err != nil {
+				patchErr = err
+			}
 		}
-		if err := s.ensureCard(ctx, feishuStreamThinkingText); err != nil {
-			return err
-		}
-		return s.patchCard(ctx, "Error: "+errText)
+		return errors.Join(patchErr, s.flushBufferedAttachments(ctx, nil))
 	default:
 		return nil
 	}
@@ -157,6 +171,303 @@ func (s *feishuOutboundStream) Close(ctx context.Context) error {
 	}
 	s.closed.Store(true)
 	return nil
+}
+
+func (s *feishuOutboundStream) sendMessage(ctx context.Context, msg channel.OutboundMessage) error {
+	if s == nil {
+		return errors.New("feishu stream not configured")
+	}
+	if strings.TrimSpace(msg.Target) == "" {
+		msg.Target = s.target
+	}
+	if s.send != nil {
+		return s.send(ctx, msg)
+	}
+	if s.adapter == nil {
+		return errors.New("feishu stream not configured")
+	}
+	return s.adapter.Send(ctx, s.cfg, msg)
+}
+
+func (s *feishuOutboundStream) mergeBufferedAttachments(attachments []channel.Attachment, metadata map[string]any) []channel.Attachment {
+	buffered := s.filterToolDuplicateAttachments(s.attachments, metadata)
+	current := s.filterToolDuplicateAttachments(attachments, metadata)
+	if len(buffered) == 0 {
+		s.attachments = nil
+		return current
+	}
+	merged := make([]channel.Attachment, 0, len(buffered)+len(current))
+	merged = append(merged, buffered...)
+	merged = append(merged, current...)
+	s.attachments = nil
+	return merged
+}
+
+func (s *feishuOutboundStream) flushBufferedAttachments(ctx context.Context, metadata map[string]any) error {
+	attachments := s.mergeBufferedAttachments(nil, metadata)
+	if len(attachments) == 0 {
+		return nil
+	}
+	return s.sendMessage(ctx, channel.OutboundMessage{
+		Target: s.target,
+		Message: channel.Message{
+			Attachments: attachments,
+		},
+	})
+}
+
+func (s *feishuOutboundStream) rememberToolCallAttachments(toolCall *channel.StreamToolCall) {
+	if s == nil || toolCall == nil {
+		return
+	}
+	keys := feishuToolCallAttachmentKeys(toolCall, s.target)
+	if len(keys) == 0 {
+		return
+	}
+	if s.toolSentKeys == nil {
+		s.toolSentKeys = make(map[string]struct{}, len(keys))
+	}
+	for _, key := range keys {
+		if key = strings.TrimSpace(key); key != "" {
+			s.toolSentKeys[key] = struct{}{}
+		}
+	}
+}
+
+func (s *feishuOutboundStream) filterToolDuplicateAttachments(attachments []channel.Attachment, metadata map[string]any) []channel.Attachment {
+	if len(attachments) == 0 {
+		return attachments
+	}
+	keys := make(map[string]struct{}, len(s.toolSentKeys))
+	for key := range s.toolSentKeys {
+		keys[key] = struct{}{}
+	}
+	for key := range parseFeishuToolSentAttachmentKeys(metadata) {
+		keys[key] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return attachments
+	}
+	filtered := make([]channel.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		if feishuAttachmentMatchesToolSentKeys(att, keys) {
+			continue
+		}
+		filtered = append(filtered, att)
+	}
+	return filtered
+}
+
+type feishuSendToolArgs struct {
+	Platform          string           `json:"platform"`
+	Target            string           `json:"target"`
+	ChannelIdentityID string           `json:"channel_identity_id"`
+	Attachments       any              `json:"attachments"`
+	Message           *channel.Message `json:"message"`
+}
+
+func feishuToolCallAttachmentKeys(toolCall *channel.StreamToolCall, currentTarget string) []string {
+	if toolCall == nil {
+		return nil
+	}
+	name := strings.TrimSpace(toolCall.Name)
+	if name != "send" && name != "send_message" {
+		return nil
+	}
+	var args feishuSendToolArgs
+	if !decodeFeishuSendToolArgs(toolCall.Input, &args) {
+		return nil
+	}
+	if !feishuToolCallTargetsCurrentStream(args, currentTarget) {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	keys := make([]string, 0)
+	if args.Message != nil {
+		for _, att := range args.Message.Attachments {
+			appendUniqueFeishuAttachmentKeys(&keys, seen, feishuAttachmentMatchKeys(att))
+		}
+	}
+	for _, item := range normalizeFeishuToolAttachmentInputs(args.Attachments) {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, feishuToolAttachmentInputKeys(item))
+	}
+	return keys
+}
+
+func decodeFeishuSendToolArgs(raw any, out *feishuSendToolArgs) bool {
+	if raw == nil || out == nil {
+		return false
+	}
+	data, err := json.Marshal(raw)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	return json.Unmarshal(data, out) == nil
+}
+
+func feishuToolCallTargetsCurrentStream(args feishuSendToolArgs, currentTarget string) bool {
+	platform := strings.ToLower(strings.TrimSpace(args.Platform))
+	if platform != "" && platform != "feishu" && platform != "lark" {
+		return false
+	}
+	target := strings.TrimSpace(args.Target)
+	if target == "" {
+		return strings.TrimSpace(args.ChannelIdentityID) == ""
+	}
+	return normalizeTarget(target) == normalizeTarget(currentTarget)
+}
+
+func normalizeFeishuToolAttachmentInputs(raw any) []any {
+	switch value := raw.(type) {
+	case nil:
+		return nil
+	case []any:
+		return value
+	case []string:
+		items := make([]any, 0, len(value))
+		for _, item := range value {
+			items = append(items, item)
+		}
+		return items
+	case string, map[string]any:
+		return []any{value}
+	default:
+		return nil
+	}
+}
+
+func feishuToolAttachmentInputKeys(raw any) []string {
+	switch value := raw.(type) {
+	case string:
+		return feishuAttachmentReferenceKeys(value)
+	case map[string]any:
+		seen := make(map[string]struct{})
+		keys := make([]string, 0, 4)
+		if contentHash := strings.TrimSpace(fmt.Sprint(value["content_hash"])); contentHash != "" && contentHash != "<nil>" {
+			appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"hash:" + contentHash})
+		}
+		if path := strings.TrimSpace(fmt.Sprint(value["path"])); path != "" && path != "<nil>" {
+			appendUniqueFeishuAttachmentKeys(&keys, seen, feishuAttachmentReferenceKeys(path))
+		}
+		if url := strings.TrimSpace(fmt.Sprint(value["url"])); url != "" && url != "<nil>" {
+			appendUniqueFeishuAttachmentKeys(&keys, seen, feishuAttachmentReferenceKeys(url))
+		}
+		return keys
+	default:
+		return nil
+	}
+}
+
+func appendUniqueFeishuAttachmentKeys(dst *[]string, seen map[string]struct{}, keys []string) {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		*dst = append(*dst, key)
+	}
+}
+
+func parseFeishuToolSentAttachmentKeys(metadata map[string]any) map[string]struct{} {
+	if len(metadata) == 0 {
+		return nil
+	}
+	raw, ok := metadata["tool_sent_attachment_keys"]
+	if !ok || raw == nil {
+		return nil
+	}
+	keys := make(map[string]struct{})
+	switch value := raw.(type) {
+	case []any:
+		for _, item := range value {
+			if key := strings.TrimSpace(fmt.Sprint(item)); key != "" && key != "<nil>" {
+				keys[key] = struct{}{}
+			}
+		}
+	case []string:
+		for _, item := range value {
+			if key := strings.TrimSpace(item); key != "" {
+				keys[key] = struct{}{}
+			}
+		}
+	case string:
+		if key := strings.TrimSpace(value); key != "" {
+			keys[key] = struct{}{}
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
+
+func feishuAttachmentMatchesToolSentKeys(att channel.Attachment, keys map[string]struct{}) bool {
+	for _, key := range feishuAttachmentMatchKeys(att) {
+		if _, ok := keys[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func feishuAttachmentMatchKeys(att channel.Attachment) []string {
+	seen := make(map[string]struct{})
+	keys := make([]string, 0, 4)
+	if contentHash := strings.TrimSpace(att.ContentHash); contentHash != "" {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"hash:" + contentHash})
+	}
+	if storageKey := feishuAttachmentStorageKey(att); storageKey != "" {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"storage:" + storageKey})
+	}
+	if ref := strings.TrimSpace(att.URL); ref != "" {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, feishuAttachmentReferenceKeys(ref))
+	}
+	if platformKey := strings.TrimSpace(att.PlatformKey); platformKey != "" {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"platform:" + platformKey})
+	}
+	return keys
+}
+
+func feishuAttachmentStorageKey(att channel.Attachment) string {
+	if att.Metadata == nil {
+		return ""
+	}
+	storageKey, _ := att.Metadata["storage_key"].(string)
+	return strings.TrimSpace(storageKey)
+}
+
+func feishuAttachmentReferenceKeys(ref string) []string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	keys := make([]string, 0, 3)
+	appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"ref:" + ref})
+	if storageKey := feishuExtractStorageKey(ref); storageKey != "" {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"storage:" + storageKey})
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		appendUniqueFeishuAttachmentKeys(&keys, seen, []string{"url:" + ref})
+	}
+	return keys
+}
+
+func feishuExtractStorageKey(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ""
+	}
+	marker := "/data/media/"
+	idx := strings.Index(ref, marker)
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(ref[idx+len(marker):])
 }
 
 func (s *feishuOutboundStream) ensureCard(ctx context.Context, text string) error {

@@ -609,10 +609,16 @@ func (a *FeishuAdapter) OpenStream(ctx context.Context, cfg channel.ChannelConfi
 	default:
 	}
 	return &feishuOutboundStream{
-		adapter:       a,
-		cfg:           cfg,
-		target:        target,
-		reply:         opts.Reply,
+		adapter: a,
+		cfg:     cfg,
+		target:  target,
+		reply:   opts.Reply,
+		send: func(ctx context.Context, msg channel.OutboundMessage) error {
+			if strings.TrimSpace(msg.Target) == "" {
+				msg.Target = target
+			}
+			return a.Send(ctx, cfg, msg)
+		},
 		client:        client,
 		receiveID:     receiveID,
 		receiveType:   receiveType,
