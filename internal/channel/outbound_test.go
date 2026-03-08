@@ -805,6 +805,89 @@ func TestPushDelta_FinalWithAttachmentsAfterSplit(t *testing.T) {
 	}
 }
 
+func TestPushDelta_FinalWithPreviouslyStreamedAttachmentsAfterSplit(t *testing.T) {
+	t.Parallel()
+	stream, _, sent := newDeltaSplitTestStream(t, 50, 3)
+	stream.trackSplitDeliveredAttachments = true
+
+	attachment := Attachment{Type: AttachmentImage, URL: "https://example.com/img.png"}
+	if err := stream.Push(context.Background(), StreamEvent{
+		Type:        StreamEventAttachment,
+		Attachments: []Attachment{attachment},
+	}); err != nil {
+		t.Fatalf("attachment push failed: %v", err)
+	}
+
+	for range 8 {
+		if err := stream.Push(context.Background(), StreamEvent{
+			Type:  StreamEventDelta,
+			Delta: strings.Repeat("w", 10),
+		}); err != nil {
+			t.Fatalf("delta push failed: %v", err)
+		}
+	}
+
+	finalEvent := StreamEvent{
+		Type: StreamEventFinal,
+		Final: &StreamFinalizePayload{
+			Message: Message{
+				Text:        strings.Repeat("w", 80),
+				Format:      MessageFormatPlain,
+				Attachments: []Attachment{attachment},
+			},
+		},
+	}
+	if err := stream.Push(context.Background(), finalEvent); err != nil {
+		t.Fatalf("final push failed: %v", err)
+	}
+
+	if len(*sent) != 0 {
+		t.Fatalf("expected no attachment resend after split for previously streamed attachment, got %d sends", len(*sent))
+	}
+}
+
+func TestPushDelta_FinalWithActionsAfterSplitWhenAttachmentsAlreadyDelivered(t *testing.T) {
+	t.Parallel()
+	stream, _, sent := newDeltaSplitTestStream(t, 50, 3)
+	stream.trackSplitDeliveredAttachments = true
+
+	attachment := Attachment{Type: AttachmentImage, URL: "https://example.com/img.png"}
+	if err := stream.Push(context.Background(), StreamEvent{
+		Type:        StreamEventAttachment,
+		Attachments: []Attachment{attachment},
+	}); err != nil {
+		t.Fatalf("attachment push failed: %v", err)
+	}
+
+	for range 8 {
+		if err := stream.Push(context.Background(), StreamEvent{
+			Type:  StreamEventDelta,
+			Delta: strings.Repeat("w", 10),
+		}); err != nil {
+			t.Fatalf("delta push failed: %v", err)
+		}
+	}
+
+	finalEvent := StreamEvent{
+		Type: StreamEventFinal,
+		Final: &StreamFinalizePayload{
+			Message: Message{
+				Text:        strings.Repeat("w", 80),
+				Format:      MessageFormatPlain,
+				Attachments: []Attachment{attachment},
+				Actions:     []Action{{Type: "button", Label: "Open"}},
+			},
+		},
+	}
+	if err := stream.Push(context.Background(), finalEvent); err != nil {
+		t.Fatalf("final push failed: %v", err)
+	}
+
+	if len(*sent) != 0 {
+		t.Fatalf("expected no action-only tail send after split, got %d sends", len(*sent))
+	}
+}
+
 func TestPushDelta_NoSplitWhenNoLimit(t *testing.T) {
 	t.Parallel()
 	stream, reo, _ := newDeltaSplitTestStream(t, 0, 2)

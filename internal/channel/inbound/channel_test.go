@@ -766,10 +766,42 @@ func TestChannelInboundProcessorPersistsAttachmentAssetRefs(t *testing.T) {
 	}
 }
 
-func TestChannelInboundProcessorMarksQQToolSentAttachmentKeysOnFinal(t *testing.T) {
-	channelIdentitySvc := &fakeChannelIdentityService{channelIdentity: identities.ChannelIdentity{ID: "channelIdentity-qq-tool-attachments"}}
-	memberSvc := &fakeMemberService{isMember: true}
-	chatSvc := &fakeChatService{resolveResult: route.ResolveConversationResult{ChatID: "chat-qq-tool-attachments", RouteID: "route-qq-tool-attachments"}}
+func TestCollectMessageToolContextIncludesAttachmentKeysForCurrentTarget(t *testing.T) {
+	argsJSON, err := json.Marshal(map[string]any{
+		"platform": "qq",
+		"target":   "c2c:user-openid",
+		"attachments": []any{
+			"/data/media/tool/file.txt",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal tool args: %v", err)
+	}
+	ctx := collectMessageToolContext(nil, []conversation.ModelMessage{
+		{
+			Role:    "assistant",
+			Content: conversation.NewTextContent("done"),
+			ToolCalls: []conversation.ToolCall{
+				{
+					Type: "function",
+					Function: conversation.ToolCallFunction{
+						Name:      "send",
+						Arguments: string(argsJSON),
+					},
+				},
+			},
+		},
+	}, channel.ChannelType("qq"), "c2c:user-openid")
+
+	if !ctx.suppressReplies {
+		t.Fatal("expected current-target send tool to suppress direct replies")
+	}
+	if len(ctx.sentAttachmentKeys) != 2 {
+		t.Fatalf("expected two tool attachment match keys, got %d (%v)", len(ctx.sentAttachmentKeys), ctx.sentAttachmentKeys)
+	}
+}
+
+func TestCollectMessageToolContextKeepsAttachmentKeysForOtherTarget(t *testing.T) {
 	argsJSON, err := json.Marshal(map[string]any{
 		"platform": "qq",
 		"target":   "group:external-target",
@@ -780,75 +812,27 @@ func TestChannelInboundProcessorMarksQQToolSentAttachmentKeysOnFinal(t *testing.
 	if err != nil {
 		t.Fatalf("marshal tool args: %v", err)
 	}
-	gateway := &fakeChatGateway{
-		streamChunks: []conversation.StreamChunk{
-			mustStreamChunk(t, map[string]any{
-				"type": "attachment_delta",
-				"attachments": []map[string]any{
-					{
-						"type": "file",
-						"path": "/data/media/tool/file.txt",
-						"name": "file.txt",
+	ctx := collectMessageToolContext(nil, []conversation.ModelMessage{
+		{
+			Role:    "assistant",
+			Content: conversation.NewTextContent("done"),
+			ToolCalls: []conversation.ToolCall{
+				{
+					Type: "function",
+					Function: conversation.ToolCallFunction{
+						Name:      "send",
+						Arguments: string(argsJSON),
 					},
 				},
-			}),
-			mustStreamChunk(t, map[string]any{
-				"type": "agent_end",
-				"messages": []conversation.ModelMessage{
-					{
-						Role:    "assistant",
-						Content: conversation.NewTextContent("done"),
-						ToolCalls: []conversation.ToolCall{
-							{
-								Type: "function",
-								Function: conversation.ToolCallFunction{
-									Name:      "send",
-									Arguments: string(argsJSON),
-								},
-							},
-						},
-					},
-				},
-			}),
+			},
 		},
-	}
-	processor := NewChannelInboundProcessor(slog.Default(), nil, chatSvc, chatSvc, gateway, channelIdentitySvc, memberSvc, nil, nil, nil, "", 0)
-	sender := &fakeReplySender{}
+	}, channel.ChannelType("qq"), "c2c:user-openid")
 
-	cfg := channel.ChannelConfig{ID: "cfg-qq-tool-attachments", BotID: "bot-1", ChannelType: channel.ChannelType("qq")}
-	msg := channel.InboundMessage{
-		BotID:       "bot-1",
-		Channel:     channel.ChannelType("qq"),
-		Message:     channel.Message{ID: "msg-qq-tool-attachments-1", Text: "hello"},
-		ReplyTarget: "c2c:user-openid",
-		Sender:      channel.Identity{SubjectID: "qq-user"},
-		Conversation: channel.Conversation{
-			ID:   "qq-user",
-			Type: "p2p",
-		},
+	if ctx.suppressReplies {
+		t.Fatal("expected other-target send tool to keep direct replies enabled")
 	}
-
-	if err := processor.HandleInbound(context.Background(), cfg, msg, sender); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	var finalEvent *channel.StreamEvent
-	for i := range sender.events {
-		event := sender.events[i]
-		if event.Type == channel.StreamEventFinal && event.Final != nil {
-			finalEvent = &event
-			break
-		}
-	}
-	if finalEvent == nil {
-		t.Fatal("expected final stream event")
-	}
-	rawKeys, ok := finalEvent.Final.Message.Metadata["tool_sent_attachment_keys"].([]any)
-	if !ok {
-		t.Fatalf("expected tool_sent_attachment_keys metadata, got %+v", finalEvent.Final.Message.Metadata)
-	}
-	if len(rawKeys) != 2 {
-		t.Fatalf("expected two tool attachment match keys, got %d (%v)", len(rawKeys), rawKeys)
+	if len(ctx.sentAttachmentKeys) != 2 {
+		t.Fatalf("expected two attachment keys for other target, got %d (%v)", len(ctx.sentAttachmentKeys), ctx.sentAttachmentKeys)
 	}
 }
 

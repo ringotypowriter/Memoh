@@ -25,23 +25,24 @@ const (
 )
 
 type feishuOutboundStream struct {
-	adapter       *FeishuAdapter
-	cfg           channel.ChannelConfig
-	target        string
-	reply         *channel.ReplyRef
-	send          func(context.Context, channel.OutboundMessage) error
-	client        *lark.Client
-	receiveID     string
-	receiveType   string
-	cardMessageID string
-	textBuffer    strings.Builder
-	lastPatchedAt time.Time
-	lastPatched   string
-	patchInterval time.Duration
-	attachments   []channel.Attachment
-	toolSentKeys  map[string]struct{}
-	sawFinal      bool
-	closed        atomic.Bool
+	adapter        *FeishuAdapter
+	cfg            channel.ChannelConfig
+	target         string
+	reply          *channel.ReplyRef
+	send           func(context.Context, channel.OutboundMessage) error
+	client         *lark.Client
+	receiveID      string
+	receiveType    string
+	cardMessageID  string
+	textBuffer     strings.Builder
+	lastPatchedAt  time.Time
+	lastPatched    string
+	patchInterval  time.Duration
+	attachments    []channel.Attachment
+	toolSentKeys   map[string]struct{}
+	failedToolKeys map[string]struct{}
+	sawFinal       bool
+	closed         atomic.Bool
 }
 
 func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEvent) error {
@@ -78,7 +79,6 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		}
 		return s.patchCard(ctx, s.textBuffer.String())
 	case channel.StreamEventToolCallStart:
-		s.rememberToolCallAttachments(event.ToolCall)
 		bufText := strings.TrimSpace(s.textBuffer.String())
 		if s.cardMessageID != "" && bufText != "" {
 			_ = s.patchCard(ctx, bufText)
@@ -89,7 +89,7 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 		s.textBuffer.Reset()
 		return nil
 	case channel.StreamEventToolCallEnd:
-		s.rememberToolCallAttachments(event.ToolCall)
+		s.rememberToolCallAttachmentOutcome(event.ToolCall)
 		s.cardMessageID = ""
 		s.lastPatched = ""
 		s.lastPatchedAt = time.Time{}
@@ -216,7 +216,7 @@ func (s *feishuOutboundStream) flushBufferedAttachments(ctx context.Context, met
 	})
 }
 
-func (s *feishuOutboundStream) rememberToolCallAttachments(toolCall *channel.StreamToolCall) {
+func (s *feishuOutboundStream) rememberToolCallAttachmentOutcome(toolCall *channel.StreamToolCall) {
 	if s == nil || toolCall == nil {
 		return
 	}
@@ -224,14 +224,58 @@ func (s *feishuOutboundStream) rememberToolCallAttachments(toolCall *channel.Str
 	if len(keys) == 0 {
 		return
 	}
-	if s.toolSentKeys == nil {
-		s.toolSentKeys = make(map[string]struct{}, len(keys))
+	success := feishuToolCallSucceeded(toolCall.Result)
+	if success {
+		if s.toolSentKeys == nil {
+			s.toolSentKeys = make(map[string]struct{}, len(keys))
+		}
+		for _, key := range keys {
+			if key = strings.TrimSpace(key); key != "" {
+				s.toolSentKeys[key] = struct{}{}
+				if s.failedToolKeys != nil {
+					delete(s.failedToolKeys, key)
+				}
+			}
+		}
+		return
+	}
+	if s.failedToolKeys == nil {
+		s.failedToolKeys = make(map[string]struct{}, len(keys))
 	}
 	for _, key := range keys {
 		if key = strings.TrimSpace(key); key != "" {
-			s.toolSentKeys[key] = struct{}{}
+			if s.toolSentKeys != nil {
+				if _, sent := s.toolSentKeys[key]; sent {
+					continue
+				}
+			}
+			s.failedToolKeys[key] = struct{}{}
 		}
 	}
+}
+
+func feishuToolCallSucceeded(result any) bool {
+	value, ok := result.(map[string]any)
+	if !ok {
+		return true
+	}
+	if raw, exists := value["isError"]; exists {
+		switch v := raw.(type) {
+		case bool:
+			if v {
+				return false
+			}
+			return true
+		case string:
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "true":
+				return false
+			case "false":
+				return true
+			}
+		}
+	}
+	return true
 }
 
 func (s *feishuOutboundStream) filterToolDuplicateAttachments(attachments []channel.Attachment, metadata map[string]any) []channel.Attachment {
@@ -244,6 +288,9 @@ func (s *feishuOutboundStream) filterToolDuplicateAttachments(attachments []chan
 	}
 	for key := range parseFeishuToolSentAttachmentKeys(metadata) {
 		keys[key] = struct{}{}
+	}
+	for key := range s.failedToolKeys {
+		delete(keys, key)
 	}
 	if len(keys) == 0 {
 		return attachments

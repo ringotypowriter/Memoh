@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -560,14 +561,17 @@ func (s *managerReplySender) OpenStream(ctx context.Context, target string, opts
 }
 
 type managerOutboundStream struct {
-	manager     *Manager
-	stream      OutboundStream
-	channelType ChannelType
-	send        func(ctx context.Context, msg OutboundMessage) error
-	reopen      func(ctx context.Context) (OutboundStream, error)
-	deltaRunes  int
-	deltaText   strings.Builder
-	splitCount  int
+	manager                        *Manager
+	stream                         OutboundStream
+	channelType                    ChannelType
+	send                           func(ctx context.Context, msg OutboundMessage) error
+	reopen                         func(ctx context.Context) (OutboundStream, error)
+	deltaRunes                     int
+	deltaText                      strings.Builder
+	splitCount                     int
+	currentStreamAttachments       []Attachment
+	splitDeliveredAttachmentKeys   map[string]struct{}
+	trackSplitDeliveredAttachments bool
 }
 
 func (s *managerOutboundStream) Push(ctx context.Context, event StreamEvent) error {
@@ -580,6 +584,11 @@ func (s *managerOutboundStream) Push(ctx context.Context, event StreamEvent) err
 
 	if event.Type == StreamEventDelta && event.Delta != "" && event.Phase != StreamPhaseReasoning {
 		return s.pushDelta(ctx, event)
+	}
+	if event.Type == StreamEventAttachment && len(event.Attachments) > 0 {
+		if s.shouldTrackSplitDeliveredAttachments() {
+			s.currentStreamAttachments = append(s.currentStreamAttachments, event.Attachments...)
+		}
 	}
 
 	if event.Type == StreamEventFinal && event.Final != nil && s.send != nil {
@@ -652,6 +661,7 @@ func (s *managerOutboundStream) splitStream(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
+	s.markCurrentStreamAttachmentsDelivered()
 	if err := s.stream.Close(ctx); err != nil {
 		return err
 	}
@@ -698,17 +708,21 @@ func (s *managerOutboundStream) pushFinalAfterSplit(ctx context.Context, event S
 	if err := s.stream.Push(ctx, bufferFinal); err != nil {
 		return err
 	}
+	s.markCurrentStreamAttachmentsDelivered()
 
 	if event.Final == nil {
 		return nil
 	}
 	msg := event.Final.Message
+	msg.Attachments = s.filterSplitDeliveredAttachments(msg.Attachments)
 
 	if len(msg.Attachments) > 0 {
 		if err := s.send(ctx, OutboundMessage{
 			Message: Message{
 				Attachments: msg.Attachments,
 				Thread:      msg.Thread,
+				Reply:       msg.Reply,
+				Metadata:    msg.Metadata,
 				Actions:     msg.Actions,
 			},
 		}); err != nil {
@@ -716,6 +730,56 @@ func (s *managerOutboundStream) pushFinalAfterSplit(ctx context.Context, event S
 		}
 	}
 	return nil
+}
+
+func (s *managerOutboundStream) shouldTrackSplitDeliveredAttachments() bool {
+	if s.trackSplitDeliveredAttachments {
+		return true
+	}
+	return strings.EqualFold(string(s.channelType), "feishu")
+}
+
+func (s *managerOutboundStream) markCurrentStreamAttachmentsDelivered() {
+	if !s.shouldTrackSplitDeliveredAttachments() || len(s.currentStreamAttachments) == 0 {
+		s.currentStreamAttachments = nil
+		return
+	}
+	if s.splitDeliveredAttachmentKeys == nil {
+		s.splitDeliveredAttachmentKeys = make(map[string]struct{}, len(s.currentStreamAttachments))
+	}
+	for _, att := range s.currentStreamAttachments {
+		key, ok := exactAttachmentKey(att)
+		if !ok {
+			continue
+		}
+		s.splitDeliveredAttachmentKeys[key] = struct{}{}
+	}
+	s.currentStreamAttachments = nil
+}
+
+func (s *managerOutboundStream) filterSplitDeliveredAttachments(attachments []Attachment) []Attachment {
+	if len(attachments) == 0 || len(s.splitDeliveredAttachmentKeys) == 0 {
+		return attachments
+	}
+	filtered := make([]Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		key, ok := exactAttachmentKey(att)
+		if ok {
+			if _, seen := s.splitDeliveredAttachmentKeys[key]; seen {
+				continue
+			}
+		}
+		filtered = append(filtered, att)
+	}
+	return filtered
+}
+
+func exactAttachmentKey(att Attachment) (string, bool) {
+	data, err := json.Marshal(att)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
 }
 
 func (s *managerOutboundStream) pushFinalWithChunking(ctx context.Context, event StreamEvent) error {
