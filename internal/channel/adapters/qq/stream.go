@@ -2,6 +2,7 @@ package qq
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -17,11 +18,13 @@ type qqOutboundStream struct {
 	reply  *channel.ReplyRef
 	send   func(context.Context, channel.OutboundMessage) error
 
-	closed      atomic.Bool
-	mu          sync.Mutex
-	buffer      strings.Builder
-	attachments []channel.Attachment
-	sentText    bool
+	closed         atomic.Bool
+	mu             sync.Mutex
+	buffer         strings.Builder
+	attachments    []channel.Attachment
+	sentText       bool
+	toolSentKeys   map[string]struct{}
+	failedToolKeys map[string]struct{}
 }
 
 func (a *QQAdapter) OpenStream(_ context.Context, cfg channel.ChannelConfig, target string, opts channel.StreamOptions) (channel.OutboundStream, error) {
@@ -58,7 +61,6 @@ func (s *qqOutboundStream) Push(ctx context.Context, event channel.StreamEvent) 
 		channel.StreamEventPhaseStart,
 		channel.StreamEventPhaseEnd,
 		channel.StreamEventToolCallStart,
-		channel.StreamEventToolCallEnd,
 		channel.StreamEventAgentStart,
 		channel.StreamEventAgentEnd,
 		channel.StreamEventProcessingStarted,
@@ -72,6 +74,9 @@ func (s *qqOutboundStream) Push(ctx context.Context, event channel.StreamEvent) 
 		s.mu.Lock()
 		s.buffer.WriteString(event.Delta)
 		s.mu.Unlock()
+		return nil
+	case channel.StreamEventToolCallEnd:
+		s.rememberToolCallAttachmentOutcome(event.ToolCall)
 		return nil
 	case channel.StreamEventAttachment:
 		if len(event.Attachments) == 0 {
@@ -130,7 +135,7 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 	} else if alreadySentText && len(bufferedAttachments) == 0 && len(msg.Attachments) == 0 && strings.TrimSpace(msg.PlainText()) != "" {
 		return nil
 	}
-	toolSentKeys := parseToolSentAttachmentKeys(msg.Metadata)
+	toolSentKeys := s.mergedToolSentKeys(msg.Metadata)
 	if len(bufferedAttachments) > 0 || len(msg.Attachments) > 0 {
 		msg.Attachments = deduplicateQQAttachmentsExact(append(
 			filterQQToolDuplicateAttachments(bufferedAttachments, toolSentKeys),
@@ -155,6 +160,215 @@ func (s *qqOutboundStream) flush(ctx context.Context, msg channel.Message) error
 		s.mu.Unlock()
 	}
 	return nil
+}
+
+func (s *qqOutboundStream) mergedToolSentKeys(metadata map[string]any) map[string]struct{} {
+	metaKeys := parseToolSentAttachmentKeys(metadata)
+	if len(s.toolSentKeys) == 0 {
+		return metaKeys
+	}
+	merged := make(map[string]struct{}, len(s.toolSentKeys)+len(metaKeys))
+	for k := range s.toolSentKeys {
+		merged[k] = struct{}{}
+	}
+	for k := range metaKeys {
+		merged[k] = struct{}{}
+	}
+	for k := range s.failedToolKeys {
+		delete(merged, k)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func (s *qqOutboundStream) rememberToolCallAttachmentOutcome(toolCall *channel.StreamToolCall) {
+	if s == nil || toolCall == nil {
+		return
+	}
+	keys := qqToolCallAttachmentKeys(toolCall, s.target)
+	if len(keys) == 0 {
+		return
+	}
+	success := qqToolCallSucceeded(toolCall.Result)
+	if success {
+		if s.toolSentKeys == nil {
+			s.toolSentKeys = make(map[string]struct{}, len(keys))
+		}
+		for _, key := range keys {
+			if key = strings.TrimSpace(key); key != "" {
+				s.toolSentKeys[key] = struct{}{}
+				if s.failedToolKeys != nil {
+					delete(s.failedToolKeys, key)
+				}
+			}
+		}
+		return
+	}
+	if s.failedToolKeys == nil {
+		s.failedToolKeys = make(map[string]struct{}, len(keys))
+	}
+	for _, key := range keys {
+		if key = strings.TrimSpace(key); key != "" {
+			if s.toolSentKeys != nil {
+				if _, sent := s.toolSentKeys[key]; sent {
+					continue
+				}
+			}
+			s.failedToolKeys[key] = struct{}{}
+		}
+	}
+}
+
+type qqSendToolArgs struct {
+	Platform          string           `json:"platform"`
+	Target            string           `json:"target"`
+	ChannelIdentityID string           `json:"channel_identity_id"`
+	Attachments       any              `json:"attachments"`
+	Message           *channel.Message `json:"message"`
+}
+
+func qqToolCallAttachmentKeys(toolCall *channel.StreamToolCall, currentTarget string) []string {
+	if toolCall == nil {
+		return nil
+	}
+	name := strings.TrimSpace(toolCall.Name)
+	if name != "send" && name != "send_message" {
+		return nil
+	}
+	var args qqSendToolArgs
+	if !decodeQQSendToolArgs(toolCall.Input, &args) {
+		return nil
+	}
+	if !qqToolCallTargetsCurrentStream(args, currentTarget) {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var keys []string
+	if args.Message != nil {
+		for _, att := range args.Message.Attachments {
+			appendUniqueQQAttachmentKeys(&keys, seen, qqAttachmentMatchKeys(att))
+		}
+	}
+	for _, item := range normalizeQQToolAttachmentInputs(args.Attachments) {
+		appendUniqueQQAttachmentKeys(&keys, seen, qqToolAttachmentInputKeys(item))
+	}
+	return keys
+}
+
+func decodeQQSendToolArgs(raw any, out *qqSendToolArgs) bool {
+	if raw == nil || out == nil {
+		return false
+	}
+	data, err := json.Marshal(raw)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	return json.Unmarshal(data, out) == nil
+}
+
+func qqToolCallTargetsCurrentStream(args qqSendToolArgs, currentTarget string) bool {
+	platform := strings.ToLower(strings.TrimSpace(args.Platform))
+	if platform != "" && platform != "qq" {
+		return false
+	}
+	target := strings.TrimSpace(args.Target)
+	if target == "" {
+		return strings.TrimSpace(args.ChannelIdentityID) == ""
+	}
+	return normalizeTarget(target) == normalizeTarget(currentTarget)
+}
+
+func qqToolCallSucceeded(result any) bool {
+	value, ok := result.(map[string]any)
+	if !ok {
+		return true
+	}
+	if raw, exists := value["isError"]; exists {
+		switch v := raw.(type) {
+		case bool:
+			return !v
+		case string:
+			return strings.ToLower(strings.TrimSpace(v)) != "true"
+		}
+	}
+	return true
+}
+
+func normalizeQQToolAttachmentInputs(raw any) []any {
+	switch value := raw.(type) {
+	case nil:
+		return nil
+	case []any:
+		return value
+	case []string:
+		items := make([]any, 0, len(value))
+		for _, item := range value {
+			items = append(items, item)
+		}
+		return items
+	case string, map[string]any:
+		return []any{value}
+	default:
+		return nil
+	}
+}
+
+func qqToolAttachmentInputKeys(raw any) []string {
+	switch value := raw.(type) {
+	case string:
+		ref := strings.TrimSpace(value)
+		if ref == "" {
+			return nil
+		}
+		keys := []string{"ref:" + ref}
+		if sk := qqExtractStorageKey(ref); sk != "" {
+			keys = append(keys, "storage:"+sk)
+		}
+		return keys
+	case map[string]any:
+		seen := make(map[string]struct{})
+		var keys []string
+		if contentHash := strings.TrimSpace(fmt.Sprint(value["content_hash"])); contentHash != "" && contentHash != "<nil>" {
+			appendUniqueQQAttachmentKeys(&keys, seen, []string{"hash:" + contentHash})
+		}
+		if path := strings.TrimSpace(fmt.Sprint(value["path"])); path != "" && path != "<nil>" {
+			appendUniqueQQAttachmentKeys(&keys, seen, qqRefKeys(path))
+		}
+		if url := strings.TrimSpace(fmt.Sprint(value["url"])); url != "" && url != "<nil>" {
+			appendUniqueQQAttachmentKeys(&keys, seen, qqRefKeys(url))
+		}
+		return keys
+	default:
+		return nil
+	}
+}
+
+func qqRefKeys(ref string) []string {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	keys := []string{"ref:" + ref}
+	if sk := qqExtractStorageKey(ref); sk != "" {
+		keys = append(keys, "storage:"+sk)
+	}
+	return keys
+}
+
+func appendUniqueQQAttachmentKeys(dst *[]string, seen map[string]struct{}, keys []string) {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		*dst = append(*dst, key)
+	}
 }
 
 func parseToolSentAttachmentKeys(metadata map[string]any) map[string]struct{} {

@@ -240,6 +240,150 @@ func TestQQOutboundStreamIgnoresLaterTextOnlyFinalAfterBufferedReply(t *testing.
 	}
 }
 
+func TestQQOutboundStreamDedupsAttachmentsOnErrorFlushViaToolSentKeys(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventToolCallEnd,
+		ToolCall: &channel.StreamToolCall{
+			Name: "send",
+			Input: map[string]any{
+				"platform":    "qq",
+				"target":      "group:group-openid",
+				"attachments": []any{"/data/media/tool/file.txt"},
+			},
+			Result: map[string]any{"ok": true},
+		},
+	}); err != nil {
+		t.Fatalf("push tool_call_end: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{{Type: channel.AttachmentFile, URL: "/data/media/tool/file.txt"}},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:  channel.StreamEventError,
+		Error: "something went wrong",
+	}); err != nil {
+		t.Fatalf("push error: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send (error text only), got %d", len(sent))
+	}
+	if len(sent[0].Message.Attachments) != 0 {
+		t.Fatalf("expected tool-sent attachment to be filtered on error flush, got %d", len(sent[0].Message.Attachments))
+	}
+}
+
+func TestQQOutboundStreamKeepsAttachmentsForOtherTargets(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventToolCallEnd,
+		ToolCall: &channel.StreamToolCall{
+			Name: "send",
+			Input: map[string]any{
+				"platform":    "qq",
+				"target":      "group:other-group",
+				"attachments": []any{"/data/media/tool/file.txt"},
+			},
+			Result: map[string]any{"ok": true},
+		},
+	}); err != nil {
+		t.Fatalf("push tool_call_end: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{{Type: channel.AttachmentFile, URL: "/data/media/tool/file.txt"}},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:  channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send with kept attachment, got %d", len(sent))
+	}
+	if len(sent[0].Message.Attachments) != 1 {
+		t.Fatalf("expected attachment for other target to be kept, got %d", len(sent[0].Message.Attachments))
+	}
+}
+
+func TestQQOutboundStreamKeepsAttachmentsWhenToolCallFails(t *testing.T) {
+	t.Parallel()
+
+	var sent []channel.OutboundMessage
+	stream := &qqOutboundStream{
+		target: "group:group-openid",
+		send: func(_ context.Context, msg channel.OutboundMessage) error {
+			sent = append(sent, msg)
+			return nil
+		},
+	}
+
+	ctx := context.Background()
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type: channel.StreamEventToolCallEnd,
+		ToolCall: &channel.StreamToolCall{
+			Name: "send",
+			Input: map[string]any{
+				"platform":    "qq",
+				"target":      "group:group-openid",
+				"attachments": []any{"/data/media/tool/file.txt"},
+			},
+			Result: map[string]any{"isError": true},
+		},
+	}); err != nil {
+		t.Fatalf("push tool_call_end: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:        channel.StreamEventAttachment,
+		Attachments: []channel.Attachment{{Type: channel.AttachmentFile, URL: "/data/media/tool/file.txt"}},
+	}); err != nil {
+		t.Fatalf("push attachment: %v", err)
+	}
+	if err := stream.Push(ctx, channel.StreamEvent{
+		Type:  channel.StreamEventFinal,
+		Final: &channel.StreamFinalizePayload{},
+	}); err != nil {
+		t.Fatalf("push final: %v", err)
+	}
+
+	if len(sent) != 1 {
+		t.Fatalf("expected one send with kept attachment after failed tool, got %d", len(sent))
+	}
+	if len(sent[0].Message.Attachments) != 1 {
+		t.Fatalf("expected attachment to be kept after failed tool call, got %d", len(sent[0].Message.Attachments))
+	}
+}
+
 func TestQQOutboundStreamRejectsAfterClose(t *testing.T) {
 	t.Parallel()
 

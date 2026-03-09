@@ -831,8 +831,8 @@ func TestCollectMessageToolContextKeepsAttachmentKeysForOtherTarget(t *testing.T
 	if ctx.suppressReplies {
 		t.Fatal("expected other-target send tool to keep direct replies enabled")
 	}
-	if len(ctx.sentAttachmentKeys) != 2 {
-		t.Fatalf("expected two attachment keys for other target, got %d (%v)", len(ctx.sentAttachmentKeys), ctx.sentAttachmentKeys)
+	if len(ctx.sentAttachmentKeys) != 0 {
+		t.Fatalf("expected no attachment keys for other target, got %d (%v)", len(ctx.sentAttachmentKeys), ctx.sentAttachmentKeys)
 	}
 }
 

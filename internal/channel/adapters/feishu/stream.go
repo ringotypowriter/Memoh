@@ -63,7 +63,7 @@ func (s *feishuOutboundStream) Push(ctx context.Context, event channel.StreamEve
 			return s.ensureCard(ctx, feishuStreamThinkingText)
 		}
 		if event.Status == channel.StreamStatusCompleted && !s.sawFinal {
-			s.attachments = nil
+			return s.flushBufferedAttachments(ctx, nil)
 		}
 		return nil
 	case channel.StreamEventDelta:

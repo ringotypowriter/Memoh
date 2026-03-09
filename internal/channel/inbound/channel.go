@@ -1178,8 +1178,8 @@ func collectMessageToolContext(registry *channel.Registry, messages []conversati
 			if text := strings.TrimSpace(extractSendMessageText(args)); text != "" {
 				ctx.sentTexts = append(ctx.sentTexts, text)
 			}
-			appendUniqueToolAttachmentKeys(&ctx.sentAttachmentKeys, seenAttachmentKeys, extractSendMessageAttachmentKeys(args))
 			if shouldSuppressForToolCall(registry, args, channelType, replyTarget) {
+				appendUniqueToolAttachmentKeys(&ctx.sentAttachmentKeys, seenAttachmentKeys, extractSendMessageAttachmentKeys(args))
 				ctx.suppressReplies = true
 			}
 		}
