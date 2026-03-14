@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/memohai/memoh/internal/accounts"
+	"github.com/memohai/memoh/internal/acl"
 	"github.com/memohai/memoh/internal/auth"
 	"github.com/memohai/memoh/internal/bind"
 	"github.com/memohai/memoh/internal/boot"
@@ -72,12 +73,15 @@ import (
 	mcpwebfetch "github.com/memohai/memoh/internal/mcp/providers/webfetch"
 	mcpfederation "github.com/memohai/memoh/internal/mcp/sources/federation"
 	"github.com/memohai/memoh/internal/media"
-	memprovider "github.com/memohai/memoh/internal/memory/provider"
+	memprovider "github.com/memohai/memoh/internal/memory/adapters"
+	membuiltin "github.com/memohai/memoh/internal/memory/adapters/builtin"
+	memmem0 "github.com/memohai/memoh/internal/memory/adapters/mem0"
+	memopenviking "github.com/memohai/memoh/internal/memory/adapters/openviking"
+	storefs "github.com/memohai/memoh/internal/memory/storefs"
 	"github.com/memohai/memoh/internal/message"
 	"github.com/memohai/memoh/internal/message/event"
 	"github.com/memohai/memoh/internal/models"
 	"github.com/memohai/memoh/internal/policy"
-	"github.com/memohai/memoh/internal/preauth"
 	"github.com/memohai/memoh/internal/providers"
 	"github.com/memohai/memoh/internal/schedule"
 	"github.com/memohai/memoh/internal/searchproviders"
@@ -107,11 +111,11 @@ func runServe() {
 			models.NewService,
 			bots.NewService,
 			accounts.NewService,
+			acl.NewService,
 			settings.NewService,
 			providers.NewService,
 			searchproviders.NewService,
 			policy.NewService,
-			preauth.NewService,
 			mcp.NewConnectionService,
 			subagent.NewService,
 			conversation.NewService,
@@ -155,7 +159,7 @@ func runServe() {
 			provideServerHandler(handlers.NewSearchProvidersHandler),
 			provideServerHandler(handlers.NewModelsHandler),
 			provideServerHandler(handlers.NewSettingsHandler),
-			provideServerHandler(handlers.NewPreauthHandler),
+			provideServerHandler(handlers.NewACLHandler),
 			provideServerHandler(handlers.NewBindHandler),
 			provideServerHandler(handlers.NewScheduleHandler),
 			provideServerHandler(handlers.NewHeartbeatHandler),
@@ -253,17 +257,29 @@ func provideMemoryLLM(modelsService *models.Service, queries *dbsqlc.Queries, lo
 	return &lazyLLMClient{modelsService: modelsService, queries: queries, timeout: 30 * time.Second, logger: log}
 }
 
-func provideMemoryProviderRegistry(log *slog.Logger, chatService *conversation.Service, accountService *accounts.Service, manager *mcp.Manager) *memprovider.Registry {
+func provideMemoryProviderRegistry(log *slog.Logger, chatService *conversation.Service, accountService *accounts.Service, manager *mcp.Manager, queries *dbsqlc.Queries, cfg config.Config) *memprovider.Registry {
 	registry := memprovider.NewRegistry(log)
 	builtinRuntime := handlers.NewBuiltinMemoryRuntime(manager)
-	registry.RegisterFactory(memprovider.BuiltinType, func(_ string, _ map[string]any) (memprovider.Provider, error) {
-		return memprovider.NewBuiltinProvider(log, builtinRuntime, chatService, accountService), nil
+	fileStore := storefs.New(log, manager)
+	registry.RegisterFactory(string(memprovider.ProviderBuiltin), func(_ string, providerConfig map[string]any) (memprovider.Provider, error) {
+		runtime, err := membuiltin.NewBuiltinRuntimeFromConfig(log, providerConfig, builtinRuntime, fileStore, queries, cfg)
+		if err != nil {
+			return nil, err
+		}
+		return membuiltin.NewBuiltinProvider(log, runtime, chatService, accountService), nil
 	})
-	registry.Register("__builtin_default__", memprovider.NewBuiltinProvider(log, builtinRuntime, chatService, accountService))
+	registry.RegisterFactory(string(memprovider.ProviderMem0), func(_ string, config map[string]any) (memprovider.Provider, error) {
+		return memmem0.NewMem0Provider(log, config, fileStore)
+	})
+	registry.RegisterFactory(string(memprovider.ProviderOpenViking), func(_ string, config map[string]any) (memprovider.Provider, error) {
+		return memopenviking.NewOpenVikingProvider(log, config)
+	})
+	registry.Register("__builtin_default__", membuiltin.NewBuiltinProvider(log, builtinRuntime, chatService, accountService))
 	return registry
 }
 
 func startMemoryProviderBootstrap(lc fx.Lifecycle, log *slog.Logger, mpService *memprovider.Service, registry *memprovider.Registry) {
+	mpService.SetRegistry(registry)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
 			resp, err := mpService.EnsureDefault(ctx)
@@ -326,7 +342,7 @@ func provideChannelRegistry(log *slog.Logger, hub *local.RouteHub, mediaService 
 	return registry
 }
 
-func provideChannelRouter(log *slog.Logger, registry *channel.Registry, hub *local.RouteHub, routeService *route.DBService, msgService *message.DBService, resolver *flow.Resolver, identityService *identities.Service, botService *bots.Service, policyService *policy.Service, preauthService *preauth.Service, bindService *bind.Service, mediaService *media.Service, inboxService *inbox.Service, ttsService *ttspkg.Service, settingsService *settings.Service, subagentService *subagent.Service, scheduleService *schedule.Service, mcpConnService *mcp.ConnectionService, modelsService *models.Service, providersService *providers.Service, memProvService *memprovider.Service, searchProvService *searchproviders.Service, browserCtxService *browsercontexts.Service, emailService *emailpkg.Service, emailOutboxService *emailpkg.OutboxService, heartbeatService *heartbeat.Service, queries *dbsqlc.Queries, containerdHandler *handlers.ContainerdHandler, manager *mcp.Manager, rc *boot.RuntimeConfig) *inbound.ChannelInboundProcessor {
+func provideChannelRouter(log *slog.Logger, registry *channel.Registry, hub *local.RouteHub, routeService *route.DBService, msgService *message.DBService, resolver *flow.Resolver, identityService *identities.Service, botService *bots.Service, aclService *acl.Service, policyService *policy.Service, bindService *bind.Service, mediaService *media.Service, inboxService *inbox.Service, ttsService *ttspkg.Service, settingsService *settings.Service, subagentService *subagent.Service, scheduleService *schedule.Service, mcpConnService *mcp.ConnectionService, modelsService *models.Service, providersService *providers.Service, memProvService *memprovider.Service, searchProvService *searchproviders.Service, browserCtxService *browsercontexts.Service, emailService *emailpkg.Service, emailOutboxService *emailpkg.OutboxService, heartbeatService *heartbeat.Service, queries *dbsqlc.Queries, containerdHandler *handlers.ContainerdHandler, manager *mcp.Manager, rc *boot.RuntimeConfig) *inbound.ChannelInboundProcessor {
 	adapter, ok := registry.Get(qq.Type)
 	if !ok {
 		panic("qq adapter not registered")
@@ -337,7 +353,8 @@ func provideChannelRouter(log *slog.Logger, registry *channel.Registry, hub *loc
 	}
 	qqAdapter.SetChannelIdentityResolver(identityService)
 	qqAdapter.SetRouteResolver(routeService)
-	processor := inbound.NewChannelInboundProcessor(log, registry, routeService, msgService, resolver, identityService, botService, policyService, preauthService, bindService, rc.JwtSecret, 5*time.Minute)
+	processor := inbound.NewChannelInboundProcessor(log, registry, routeService, msgService, resolver, identityService, policyService, bindService, rc.JwtSecret, 5*time.Minute)
+	processor.SetACLService(aclService)
 	processor.SetMediaService(mediaService)
 	processor.SetStreamObserver(local.NewRouteHubBroadcaster(hub))
 	processor.SetInboxService(inboxService)

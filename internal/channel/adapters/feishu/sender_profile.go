@@ -18,6 +18,7 @@ import (
 type feishuSenderProfile struct {
 	displayName string
 	username    string
+	avatarURL   string
 }
 
 const (
@@ -189,7 +190,9 @@ func senderProfileCacheScope(cfg channel.ChannelConfig) string {
 }
 
 func hasSenderProfile(profile feishuSenderProfile) bool {
-	return strings.TrimSpace(profile.displayName) != "" || strings.TrimSpace(profile.username) != ""
+	return strings.TrimSpace(profile.displayName) != "" ||
+		strings.TrimSpace(profile.username) != "" ||
+		strings.TrimSpace(profile.avatarURL) != ""
 }
 
 func finalizeSenderProfile(profile feishuSenderProfile, openID, userID string) (feishuSenderProfile, bool) {
@@ -288,6 +291,7 @@ func lookupSenderProfileFromContact(ctx context.Context, client *lark.Client, op
 	return feishuSenderProfile{
 		displayName: displayName,
 		username:    username,
+		avatarURL:   feishuAvatarURL(resp.Data.User.Avatar),
 	}, nil
 }
 
@@ -405,5 +409,10 @@ func applySenderProfile(msg *channel.InboundMessage, profile feishuSenderProfile
 	}
 	if username != "" && strings.TrimSpace(msg.Sender.Attributes["username"]) == "" {
 		msg.Sender.Attributes["username"] = username
+	}
+	if avatarURL := strings.TrimSpace(profile.avatarURL); avatarURL != "" {
+		if strings.TrimSpace(msg.Sender.Attributes["avatar_url"]) == "" {
+			msg.Sender.Attributes["avatar_url"] = avatarURL
+		}
 	}
 }

@@ -226,7 +226,7 @@ func (h *LocalChannelHandler) PostMessage(c echo.Context) error {
 		},
 		Conversation: channel.Conversation{
 			ID:   routeKey,
-			Type: "p2p",
+			Type: channel.ConversationTypePrivate,
 		},
 		ReceivedAt: time.Now().UTC(),
 		Source:     "local",
@@ -404,7 +404,7 @@ func (h *LocalChannelHandler) HandleWebSocket(c echo.Context) error {
 					Token:                   bearerToken,
 					UserID:                  channelIdentityID,
 					SourceChannelIdentityID: channelIdentityID,
-					ConversationType:        "p2p",
+					ConversationType:        channel.ConversationTypePrivate,
 					Query:                   text,
 					CurrentChannel:          h.channelType.String(),
 					Channels:                []string{h.channelType.String()},
@@ -453,7 +453,7 @@ func (*LocalChannelHandler) requireChannelIdentityID(c echo.Context) (string, er
 }
 
 func (h *LocalChannelHandler) authorizeBotAccess(ctx context.Context, channelIdentityID, botID string) (bots.Bot, error) {
-	return AuthorizeBotAccess(ctx, h.botService, h.accountService, channelIdentityID, botID, bots.AccessPolicy{AllowPublicMember: true})
+	return AuthorizeBotAccess(ctx, h.botService, h.accountService, channelIdentityID, botID, bots.AccessPolicy{AllowGuest: true})
 }
 
 // ---------------------------------------------------------------------------

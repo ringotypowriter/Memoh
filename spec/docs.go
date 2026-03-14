@@ -182,6 +182,312 @@ const docTemplate = `{
                 }
             }
         },
+        "/bots/{bot_id}/access/channel_identities": {
+            "get": {
+                "description": "Search locally observed channel identity candidates for bot access control",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "Search access channel identities",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.ChannelIdentityCandidateListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bots/{bot_id}/access/channel_identities/{channel_identity_id}/conversations": {
+            "get": {
+                "description": "List previously observed conversation candidates for a channel identity under a bot",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "List observed conversations for a channel identity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Channel Identity ID",
+                        "name": "channel_identity_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.ObservedConversationCandidateListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bots/{bot_id}/access/users": {
+            "get": {
+                "description": "Search user candidates for bot access control",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "Search access users",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.UserCandidateListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bots/{bot_id}/blacklist": {
+            "get": {
+                "description": "List guest deny rules for chat trigger",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "List bot blacklist",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.ListRulesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Add a guest deny rule for chat trigger",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "Upsert bot blacklist entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Blacklist payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/acl.UpsertRuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.Rule"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bots/{bot_id}/blacklist/{rule_id}": {
+            "delete": {
+                "description": "Delete a guest deny rule by rule ID",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "Delete bot blacklist entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Rule ID",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/bots/{bot_id}/cli/messages": {
             "post": {
                 "description": "Post a user message (with optional attachments) through the local channel pipeline.",
@@ -2898,7 +3204,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.SearchResponse"
+                            "$ref": "#/definitions/adapters.SearchResponse"
                         }
                     },
                     "400": {
@@ -2961,7 +3267,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.SearchResponse"
+                            "$ref": "#/definitions/adapters.SearchResponse"
                         }
                     },
                     "400": {
@@ -3023,7 +3329,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.DeleteResponse"
+                            "$ref": "#/definitions/adapters.DeleteResponse"
                         }
                     },
                     "400": {
@@ -3088,7 +3394,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.CompactResult"
+                            "$ref": "#/definitions/adapters.CompactResult"
                         }
                     },
                     "400": {
@@ -3141,7 +3447,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.RebuildResult"
+                            "$ref": "#/definitions/adapters.RebuildResult"
                         }
                     },
                     "400": {
@@ -3152,6 +3458,12 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -3206,7 +3518,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.SearchResponse"
+                            "$ref": "#/definitions/adapters.SearchResponse"
                         }
                     },
                     "400": {
@@ -3223,6 +3535,65 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bots/{bot_id}/memory/status": {
+            "get": {
+                "description": "Get the resolved memory runtime status for a bot, including index health and source counts",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "memory"
+                ],
+                "summary": "Get memory runtime status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/adapters.MemoryStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -3265,7 +3636,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.UsageResponse"
+                            "$ref": "#/definitions/adapters.UsageResponse"
                         }
                     },
                     "400": {
@@ -3325,7 +3696,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.DeleteResponse"
+                            "$ref": "#/definitions/adapters.DeleteResponse"
                         }
                     },
                     "400": {
@@ -4545,6 +4916,149 @@ const docTemplate = `{
                 }
             }
         },
+        "/bots/{bot_id}/whitelist": {
+            "get": {
+                "description": "List guest allow rules for chat trigger",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "List bot whitelist",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.ListRulesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Add a guest allow rule for chat trigger",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "Upsert bot whitelist entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Whitelist payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/acl.UpsertRuleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/acl.Rule"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/bots/{bot_id}/whitelist/{rule_id}": {
+            "delete": {
+                "description": "Delete a guest allow rule by rule ID",
+                "tags": [
+                    "bots"
+                ],
+                "summary": "Delete bot whitelist entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bot ID",
+                        "name": "bot_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Rule ID",
+                        "name": "rule_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/bots/{id}": {
             "get": {
                 "description": "Get a bot by ID (owner/admin only)",
@@ -5124,167 +5638,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/bots/{id}/members": {
-            "get": {
-                "description": "List members for a bot",
-                "tags": [
-                    "bots"
-                ],
-                "summary": "List bot members",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Bot ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/bots.ListMembersResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            },
-            "put": {
-                "description": "Add or update bot member role",
-                "tags": [
-                    "bots"
-                ],
-                "summary": "Upsert bot member",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Bot ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Member payload",
-                        "name": "payload",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/bots.UpsertMemberRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/bots.BotMember"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/bots/{id}/members/{user_id}": {
-            "delete": {
-                "description": "Remove a member from a bot",
-                "tags": [
-                    "bots"
-                ],
-                "summary": "Delete bot member",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Bot ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "User ID",
-                        "name": "user_id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "No Content"
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/bots/{id}/owner": {
             "put": {
                 "description": "Transfer bot ownership to another human user",
@@ -5410,6 +5763,32 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/browser-contexts/cores": {
+            "get": {
+                "description": "Get the list of browser cores available in the Browser Gateway container",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "browser-contexts"
+                ],
+                "summary": "Get available browser cores",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BrowserCoresResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -6038,7 +6417,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/provider.ProviderGetResponse"
+                                "$ref": "#/definitions/adapters.ProviderGetResponse"
                             }
                         }
                     },
@@ -6069,7 +6448,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/provider.ProviderCreateRequest"
+                            "$ref": "#/definitions/adapters.ProviderCreateRequest"
                         }
                     }
                 ],
@@ -6077,7 +6456,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/provider.ProviderGetResponse"
+                            "$ref": "#/definitions/adapters.ProviderGetResponse"
                         }
                     },
                     "400": {
@@ -6108,7 +6487,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/provider.ProviderMeta"
+                                "$ref": "#/definitions/adapters.ProviderMeta"
                             }
                         }
                     }
@@ -6138,7 +6517,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.ProviderGetResponse"
+                            "$ref": "#/definitions/adapters.ProviderGetResponse"
                         }
                     },
                     "400": {
@@ -6181,7 +6560,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/provider.ProviderUpdateRequest"
+                            "$ref": "#/definitions/adapters.ProviderUpdateRequest"
                         }
                     }
                 ],
@@ -6189,7 +6568,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/provider.ProviderGetResponse"
+                            "$ref": "#/definitions/adapters.ProviderGetResponse"
                         }
                     },
                     "400": {
@@ -6227,6 +6606,53 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/memory-providers/{id}/status": {
+            "get": {
+                "description": "Get runtime status data for a memory provider",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "memory-providers"
+                ],
+                "summary": "Get memory provider status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/adapters.ProviderStatusResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -8547,12 +8973,591 @@ const docTemplate = `{
                 }
             }
         },
+        "acl.ChannelIdentityCandidate": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "channel": {
+                    "type": "string"
+                },
+                "channel_subject_id": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "linked_avatar_url": {
+                    "type": "string"
+                },
+                "linked_display_name": {
+                    "type": "string"
+                },
+                "linked_username": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "acl.ChannelIdentityCandidateListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/acl.ChannelIdentityCandidate"
+                    }
+                }
+            }
+        },
+        "acl.ListRulesResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/acl.Rule"
+                    }
+                }
+            }
+        },
+        "acl.ObservedConversationCandidate": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string"
+                },
+                "conversation_id": {
+                    "type": "string"
+                },
+                "conversation_name": {
+                    "type": "string"
+                },
+                "conversation_type": {
+                    "type": "string"
+                },
+                "last_observed_at": {
+                    "type": "string"
+                },
+                "route_id": {
+                    "type": "string"
+                },
+                "thread_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "acl.ObservedConversationCandidateListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/acl.ObservedConversationCandidate"
+                    }
+                }
+            }
+        },
+        "acl.Rule": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "bot_id": {
+                    "type": "string"
+                },
+                "channel_identity_avatar_url": {
+                    "type": "string"
+                },
+                "channel_identity_display_name": {
+                    "type": "string"
+                },
+                "channel_identity_id": {
+                    "type": "string"
+                },
+                "channel_subject_id": {
+                    "type": "string"
+                },
+                "channel_type": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "effect": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "linked_user_avatar_url": {
+                    "type": "string"
+                },
+                "linked_user_display_name": {
+                    "type": "string"
+                },
+                "linked_user_id": {
+                    "type": "string"
+                },
+                "linked_user_username": {
+                    "type": "string"
+                },
+                "source_scope": {
+                    "$ref": "#/definitions/acl.SourceScope"
+                },
+                "subject_kind": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_avatar_url": {
+                    "type": "string"
+                },
+                "user_display_name": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "user_username": {
+                    "type": "string"
+                }
+            }
+        },
+        "acl.SourceScope": {
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string"
+                },
+                "conversation_id": {
+                    "type": "string"
+                },
+                "conversation_type": {
+                    "type": "string"
+                },
+                "thread_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "acl.UpsertRuleRequest": {
+            "type": "object",
+            "properties": {
+                "channel_identity_id": {
+                    "type": "string"
+                },
+                "source_scope": {
+                    "$ref": "#/definitions/acl.SourceScope"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "acl.UserCandidate": {
+            "type": "object",
+            "properties": {
+                "avatar_url": {
+                    "type": "string"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "acl.UserCandidateListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/acl.UserCandidate"
+                    }
+                }
+            }
+        },
+        "adapters.CDFPoint": {
+            "type": "object",
+            "properties": {
+                "cumulative": {
+                    "description": "cumulative weight fraction [0.0, 1.0]",
+                    "type": "number"
+                },
+                "k": {
+                    "description": "rank position (1-based, sorted by value desc)",
+                    "type": "integer"
+                }
+            }
+        },
+        "adapters.CompactResult": {
+            "type": "object",
+            "properties": {
+                "after_count": {
+                    "type": "integer"
+                },
+                "before_count": {
+                    "type": "integer"
+                },
+                "ratio": {
+                    "type": "number"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/adapters.MemoryItem"
+                    }
+                }
+            }
+        },
+        "adapters.DeleteResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.HealthStatus": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "adapters.MemoryItem": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "bot_id": {
+                    "type": "string"
+                },
+                "cdf_curve": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/adapters.CDFPoint"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "hash": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "memory": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "run_id": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "number"
+                },
+                "top_k_buckets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/adapters.TopKBucket"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.MemoryStatusResponse": {
+            "type": "object",
+            "properties": {
+                "can_manual_sync": {
+                    "type": "boolean"
+                },
+                "encoder": {
+                    "$ref": "#/definitions/adapters.HealthStatus"
+                },
+                "indexed_count": {
+                    "type": "integer"
+                },
+                "markdown_file_count": {
+                    "type": "integer"
+                },
+                "memory_mode": {
+                    "type": "string"
+                },
+                "overview_path": {
+                    "type": "string"
+                },
+                "provider_type": {
+                    "type": "string"
+                },
+                "qdrant": {
+                    "$ref": "#/definitions/adapters.HealthStatus"
+                },
+                "qdrant_collection": {
+                    "type": "string"
+                },
+                "source_count": {
+                    "type": "integer"
+                },
+                "source_dir": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.ProviderCollectionStatus": {
+            "type": "object",
+            "properties": {
+                "exists": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "points": {
+                    "type": "integer"
+                },
+                "qdrant": {
+                    "$ref": "#/definitions/adapters.HealthStatus"
+                }
+            }
+        },
+        "adapters.ProviderConfigSchema": {
+            "type": "object",
+            "properties": {
+                "fields": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/adapters.ProviderFieldSchema"
+                    }
+                }
+            }
+        },
+        "adapters.ProviderCreateRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/adapters.ProviderType"
+                }
+            }
+        },
+        "adapters.ProviderFieldSchema": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "example": {},
+                "required": {
+                    "type": "boolean"
+                },
+                "secret": {
+                    "type": "boolean"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.ProviderGetResponse": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.ProviderMeta": {
+            "type": "object",
+            "properties": {
+                "config_schema": {
+                    "$ref": "#/definitions/adapters.ProviderConfigSchema"
+                },
+                "display_name": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.ProviderStatusResponse": {
+            "type": "object",
+            "properties": {
+                "collections": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/adapters.ProviderCollectionStatus"
+                    }
+                },
+                "embedding_model_id": {
+                    "type": "string"
+                },
+                "memory_mode": {
+                    "type": "string"
+                },
+                "provider_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.ProviderType": {
+            "type": "string",
+            "enum": [
+                "builtin",
+                "mem0",
+                "openviking"
+            ],
+            "x-enum-varnames": [
+                "ProviderBuiltin",
+                "ProviderMem0",
+                "ProviderOpenViking"
+            ]
+        },
+        "adapters.ProviderUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "adapters.RebuildResult": {
+            "type": "object",
+            "properties": {
+                "fs_count": {
+                    "type": "integer"
+                },
+                "missing_count": {
+                    "type": "integer"
+                },
+                "restored_count": {
+                    "type": "integer"
+                },
+                "storage_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "adapters.SearchResponse": {
+            "type": "object",
+            "properties": {
+                "relations": {
+                    "type": "array",
+                    "items": {}
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/adapters.MemoryItem"
+                    }
+                }
+            }
+        },
+        "adapters.TopKBucket": {
+            "type": "object",
+            "properties": {
+                "index": {
+                    "description": "sparse dimension index (term hash)",
+                    "type": "integer"
+                },
+                "value": {
+                    "description": "weight (term frequency)",
+                    "type": "number"
+                }
+            }
+        },
+        "adapters.UsageResponse": {
+            "type": "object",
+            "properties": {
+                "avg_text_bytes": {
+                    "type": "integer"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "estimated_storage_bytes": {
+                    "type": "integer"
+                },
+                "total_text_bytes": {
+                    "type": "integer"
+                }
+            }
+        },
         "bots.Bot": {
             "type": "object",
             "properties": {
-                "allow_guest": {
-                    "type": "boolean"
-                },
                 "avatar_url": {
                     "type": "string"
                 },
@@ -8622,23 +9627,6 @@ const docTemplate = `{
                 }
             }
         },
-        "bots.BotMember": {
-            "type": "object",
-            "properties": {
-                "bot_id": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "type": "string"
-                }
-            }
-        },
         "bots.CreateBotRequest": {
             "type": "object",
             "properties": {
@@ -8682,17 +9670,6 @@ const docTemplate = `{
                 }
             }
         },
-        "bots.ListMembersResponse": {
-            "type": "object",
-            "properties": {
-                "items": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/bots.BotMember"
-                    }
-                }
-            }
-        },
         "bots.TransferBotRequest": {
             "type": "object",
             "properties": {
@@ -8716,17 +9693,6 @@ const docTemplate = `{
                 "metadata": {
                     "type": "object",
                     "additionalProperties": {}
-                }
-            }
-        },
-        "bots.UpsertMemberRequest": {
-            "type": "object",
-            "properties": {
-                "role": {
-                    "type": "string"
-                },
-                "user_id": {
-                    "type": "string"
                 }
             }
         },
@@ -9566,6 +10532,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.BrowserCoresResponse": {
+            "type": "object",
+            "properties": {
+                "cores": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "handlers.ChannelMeta": {
             "type": "object",
             "properties": {
@@ -10203,7 +11180,7 @@ const docTemplate = `{
                 "messages": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/provider.Message"
+                        "$ref": "#/definitions/adapters.Message"
                     }
                 },
                 "metadata": {
@@ -10927,274 +11904,6 @@ const docTemplate = `{
                 },
                 "type": {
                     "$ref": "#/definitions/models.ModelType"
-                }
-            }
-        },
-        "provider.CDFPoint": {
-            "type": "object",
-            "properties": {
-                "cumulative": {
-                    "description": "cumulative weight fraction [0.0, 1.0]",
-                    "type": "number"
-                },
-                "k": {
-                    "description": "rank position (1-based, sorted by value desc)",
-                    "type": "integer"
-                }
-            }
-        },
-        "provider.CompactResult": {
-            "type": "object",
-            "properties": {
-                "after_count": {
-                    "type": "integer"
-                },
-                "before_count": {
-                    "type": "integer"
-                },
-                "ratio": {
-                    "type": "number"
-                },
-                "results": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/provider.MemoryItem"
-                    }
-                }
-            }
-        },
-        "provider.DeleteResponse": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.MemoryItem": {
-            "type": "object",
-            "properties": {
-                "agent_id": {
-                    "type": "string"
-                },
-                "bot_id": {
-                    "type": "string"
-                },
-                "cdf_curve": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/provider.CDFPoint"
-                    }
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "hash": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "memory": {
-                    "type": "string"
-                },
-                "metadata": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "run_id": {
-                    "type": "string"
-                },
-                "score": {
-                    "type": "number"
-                },
-                "top_k_buckets": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/provider.TopKBucket"
-                    }
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.Message": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.ProviderConfigSchema": {
-            "type": "object",
-            "properties": {
-                "fields": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "$ref": "#/definitions/provider.ProviderFieldSchema"
-                    }
-                }
-            }
-        },
-        "provider.ProviderCreateRequest": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "name": {
-                    "type": "string"
-                },
-                "provider": {
-                    "$ref": "#/definitions/provider.ProviderType"
-                }
-            }
-        },
-        "provider.ProviderFieldSchema": {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string"
-                },
-                "example": {},
-                "required": {
-                    "type": "boolean"
-                },
-                "title": {
-                    "type": "string"
-                },
-                "type": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.ProviderGetResponse": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "is_default": {
-                    "type": "boolean"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.ProviderMeta": {
-            "type": "object",
-            "properties": {
-                "config_schema": {
-                    "$ref": "#/definitions/provider.ProviderConfigSchema"
-                },
-                "display_name": {
-                    "type": "string"
-                },
-                "provider": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.ProviderType": {
-            "type": "string",
-            "enum": [
-                "builtin"
-            ],
-            "x-enum-varnames": [
-                "ProviderBuiltin"
-            ]
-        },
-        "provider.ProviderUpdateRequest": {
-            "type": "object",
-            "properties": {
-                "config": {
-                    "type": "object",
-                    "additionalProperties": {}
-                },
-                "name": {
-                    "type": "string"
-                }
-            }
-        },
-        "provider.RebuildResult": {
-            "type": "object",
-            "properties": {
-                "fs_count": {
-                    "type": "integer"
-                },
-                "missing_count": {
-                    "type": "integer"
-                },
-                "qdrant_count": {
-                    "type": "integer"
-                },
-                "restored_count": {
-                    "type": "integer"
-                }
-            }
-        },
-        "provider.SearchResponse": {
-            "type": "object",
-            "properties": {
-                "relations": {
-                    "type": "array",
-                    "items": {}
-                },
-                "results": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/provider.MemoryItem"
-                    }
-                }
-            }
-        },
-        "provider.TopKBucket": {
-            "type": "object",
-            "properties": {
-                "index": {
-                    "description": "sparse dimension index (term hash)",
-                    "type": "integer"
-                },
-                "value": {
-                    "description": "weight (term frequency)",
-                    "type": "number"
-                }
-            }
-        },
-        "provider.UsageResponse": {
-            "type": "object",
-            "properties": {
-                "avg_text_bytes": {
-                    "type": "integer"
-                },
-                "count": {
-                    "type": "integer"
-                },
-                "estimated_storage_bytes": {
-                    "type": "integer"
-                },
-                "total_text_bytes": {
-                    "type": "integer"
                 }
             }
         },
@@ -12032,7 +12741,7 @@ const docTemplate = `{
     }
 }`
 
-// SwaggerInfo holds exported Swagger Info so clients can modify it.
+// SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0.0",
 	Host:             "",

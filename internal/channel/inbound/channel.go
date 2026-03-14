@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/memohai/memoh/internal/acl"
 	"github.com/memohai/memoh/internal/attachment"
 	"github.com/memohai/memoh/internal/auth"
 	"github.com/memohai/memoh/internal/channel"
@@ -45,6 +46,10 @@ type RouteResolver interface {
 
 type channelReactor interface {
 	React(ctx context.Context, botID string, channelType channel.ChannelType, req channel.ReactRequest) error
+}
+
+type chatACL interface {
+	CanPerformChatTrigger(ctx context.Context, req acl.ChatTriggerRequest) (bool, error)
 }
 
 type mediaIngestor interface {
@@ -81,6 +86,7 @@ type ChannelInboundProcessor struct {
 	jwtSecret        string
 	tokenTTL         time.Duration
 	identity         *IdentityResolver
+	acl              chatACL
 	observer         channel.StreamObserver
 	ttsService       ttsSynthesizer
 	ttsModelResolver ttsModelResolver
@@ -94,9 +100,7 @@ func NewChannelInboundProcessor(
 	messageWriter messagepkg.Writer,
 	runner flow.Runner,
 	channelIdentityService ChannelIdentityService,
-	memberService BotMemberService,
 	policyService PolicyService,
-	preauthService PreauthService,
 	bindService BindService,
 	jwtSecret string,
 	tokenTTL time.Duration,
@@ -107,7 +111,7 @@ func NewChannelInboundProcessor(
 	if tokenTTL <= 0 {
 		tokenTTL = 5 * time.Minute
 	}
-	identityResolver := NewIdentityResolver(log, registry, channelIdentityService, memberService, policyService, preauthService, bindService, "", "")
+	identityResolver := NewIdentityResolver(log, registry, channelIdentityService, policyService, bindService, "")
 	return &ChannelInboundProcessor{
 		runner:        runner,
 		routeResolver: routeResolver,
@@ -118,6 +122,13 @@ func NewChannelInboundProcessor(
 		tokenTTL:      tokenTTL,
 		identity:      identityResolver,
 	}
+}
+
+func (p *ChannelInboundProcessor) SetACLService(service chatACL) {
+	if p == nil {
+		return
+	}
+	p.acl = service
 }
 
 // IdentityMiddleware returns the identity resolution middleware.
@@ -253,6 +264,7 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 	resolvedAttachments := p.ingestInboundAttachments(ctx, cfg, msg, strings.TrimSpace(identity.BotID), msg.Message.Attachments)
 	attachments := mapChannelToChatAttachments(resolvedAttachments)
 	text = buildInboundQuery(msg.Message, attachments)
+	threadID := extractThreadID(msg)
 
 	// Resolve or create the route via channel_routes.
 	if p.routeResolver == nil {
@@ -263,7 +275,7 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 		BotID:             identity.BotID,
 		Platform:          msg.Channel.String(),
 		ConversationID:    msg.Conversation.ID,
-		ThreadID:          extractThreadID(msg),
+		ThreadID:          threadID,
 		ConversationType:  msg.Conversation.Type,
 		ChannelIdentityID: identity.UserID,
 		ChannelConfigID:   identity.ChannelConfigID,
@@ -283,6 +295,35 @@ func (p *ChannelInboundProcessor) HandleInbound(ctx context.Context, cfg channel
 	inboxAction := inbox.ActionNotify
 	if shouldTriggerAssistantResponse(msg) || identity.ForceReply {
 		inboxAction = inbox.ActionTrigger
+	}
+	if inboxAction == inbox.ActionTrigger && p.acl != nil {
+		allowed, err := p.acl.CanPerformChatTrigger(ctx, acl.ChatTriggerRequest{
+			BotID:             identity.BotID,
+			UserID:            identity.UserID,
+			ChannelIdentityID: identity.ChannelIdentityID,
+			SourceScope: acl.SourceScope{
+				Channel:          msg.Channel.String(),
+				ConversationType: channel.NormalizeConversationType(msg.Conversation.Type),
+				ConversationID:   strings.TrimSpace(msg.Conversation.ID),
+				ThreadID:         threadID,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("authorize chat trigger: %w", err)
+		}
+		if !allowed {
+			inboxAction = inbox.ActionNotify
+			if p.logger != nil {
+				p.logger.Info(
+					"inbound trigger denied by acl",
+					slog.String("channel", msg.Channel.String()),
+					slog.String("bot_id", strings.TrimSpace(identity.BotID)),
+					slog.String("user_id", strings.TrimSpace(identity.UserID)),
+					slog.String("channel_identity_id", strings.TrimSpace(identity.ChannelIdentityID)),
+					slog.String("conversation_type", strings.TrimSpace(msg.Conversation.Type)),
+				)
+			}
+		}
 	}
 
 	// All messages go through inbox first.
@@ -637,8 +678,7 @@ func rawTextForCommand(msg channel.InboundMessage, fallback string) string {
 }
 
 func isDirectConversationType(conversationType string) bool {
-	ct := strings.ToLower(strings.TrimSpace(conversationType))
-	return ct == "" || ct == "p2p" || ct == "private" || ct == "direct"
+	return channel.IsPrivateConversationType(conversationType)
 }
 
 func metadataBool(metadata map[string]any, key string) bool {
