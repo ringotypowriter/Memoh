@@ -864,9 +864,35 @@ func (h *ContainerdHandler) requireBotAccessWithGuest(c echo.Context) (string, e
 		return "", echo.NewHTTPError(http.StatusBadRequest, "bot id is required")
 	}
 	if _, err := AuthorizeBotAccess(c.Request().Context(), h.botService, h.accountService, channelIdentityID, botID); err != nil {
-		return "", err
+		if !h.allowGuestToolAccess(c.Request().Context(), botID, err) {
+			return "", err
+		}
 	}
 	return botID, nil
+}
+
+func (h *ContainerdHandler) allowGuestToolAccess(ctx context.Context, botID string, authErr error) bool {
+	if h == nil || h.queries == nil {
+		return false
+	}
+
+	var httpErr *echo.HTTPError
+	if !errors.As(authErr, &httpErr) || httpErr.Code != http.StatusForbidden {
+		return false
+	}
+
+	pgBotID, err := db.ParseUUID(botID)
+	if err != nil {
+		return false
+	}
+	allowed, err := h.queries.HasBotACLGuestAllAllowRule(ctx, pgBotID)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("guest tool access lookup failed", slog.String("bot_id", botID), slog.Any("error", err))
+		}
+		return false
+	}
+	return allowed
 }
 
 // SetupBotContainer creates and starts the MCP container for a bot.
