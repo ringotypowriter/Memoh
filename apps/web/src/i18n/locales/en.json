@@ -847,6 +847,8 @@
       "webhookCallback": "WebHook Callback URL",
       "webhookCallbackHint": "Use this URL as the event subscription request URL in Feishu/Lark.",
       "webhookCallbackPending": "Save this platform configuration to generate the callback URL.",
+      "feishuWebhookSecurityHint": "For security, webhook mode requires either an Encrypt Key or a Verification Token; an unprotected public callback URL should not be exposed.",
+      "feishuWebhookSecretRequired": "For security, configure at least one of Encrypt Key or Verification Token.",
       "noAvailableTypes": "All platform types have been configured",
       "types": {
         "feishu": "Feishu",

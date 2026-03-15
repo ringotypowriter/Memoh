@@ -843,6 +843,8 @@
       "webhookCallback": "WebHook 回调地址",
       "webhookCallbackHint": "将该地址配置到飞书/Lark 事件订阅的请求 URL。",
       "webhookCallbackPending": "保存平台配置后会生成回调地址。",
+      "feishuWebhookSecurityHint": "出于安全考虑，Webhook 模式必须配置 Encrypt Key 或 Verification Token 之一；未受保护的回调地址不应直接暴露在公网上。",
+      "feishuWebhookSecretRequired": "出于安全考虑，请至少配置 Encrypt Key 或 Verification Token 之一。",
       "noAvailableTypes": "所有平台类型均已配置",
       "types": {
         "feishu": "飞书",

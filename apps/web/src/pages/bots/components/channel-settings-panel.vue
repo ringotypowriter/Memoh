@@ -88,6 +88,12 @@
       <h4 class="text-sm font-medium">
         {{ $t('bots.channels.credentials') }}
       </h4>
+      <p
+        v-if="showWebhookCallback"
+        class="text-xs text-muted-foreground"
+      >
+        {{ $t('bots.channels.feishuWebhookSecurityHint') }}
+      </p>
 
       <div
         v-for="(field, key) in orderedFields"
@@ -364,6 +370,19 @@ function validateRequired(): boolean {
   return true
 }
 
+function validateFeishuWebhookSecrets(): boolean {
+  if (props.channelItem.meta.type !== 'feishu' || currentInboundMode.value !== 'webhook') {
+    return true
+  }
+  const encryptKey = String(form.credentials.encryptKey ?? form.credentials.encrypt_key ?? '').trim()
+  const verificationToken = String(form.credentials.verificationToken ?? form.credentials.verification_token ?? '').trim()
+  if (encryptKey !== '' || verificationToken !== '') {
+    return true
+  }
+  toast.error(t('bots.channels.feishuWebhookSecretRequired'))
+  return false
+}
+
 function buildCredentials(): Record<string, unknown> {
   const credentials: Record<string, unknown> = {}
   for (const [key, val] of Object.entries(form.credentials)) {
@@ -376,6 +395,7 @@ function buildCredentials(): Record<string, unknown> {
 
 async function saveChannel(disabled: boolean, nextAction: 'save' | 'toggle') {
   if (!validateRequired()) return
+  if (!validateFeishuWebhookSecrets()) return
   action.value = nextAction
   try {
     const result = await upsertChannel({
@@ -413,9 +433,10 @@ async function handleEditSave() {
 }
 
 async function handleToggleDisabled() {
-  action.value = 'toggle'
   try {
     const nextDisabled = !form.disabled
+    if (!nextDisabled && !validateFeishuWebhookSecrets()) return
+    action.value = 'toggle'
     const result = await updateChannelStatus({
       platform: props.channelItem.meta.type,
       disabled: nextDisabled,
