@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	sdk "github.com/memohai/twilight-ai/sdk"
 )
@@ -28,6 +29,15 @@ type SessionContext struct {
 	SupportsImageInput bool
 	IsSubagent         bool
 	Skills             map[string]SkillDetail
+	TimezoneLocation   *time.Location
+}
+
+// FormatTime formats a time.Time using the session timezone (falls back to UTC).
+func (s SessionContext) FormatTime(t time.Time) string {
+	if s.TimezoneLocation != nil {
+		t = t.In(s.TimezoneLocation)
+	}
+	return t.Format(time.RFC3339)
 }
 
 // ToolProvider supplies a set of tools for the agent.

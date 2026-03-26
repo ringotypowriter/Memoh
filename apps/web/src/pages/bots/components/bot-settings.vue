@@ -197,6 +197,21 @@
       />
     </div>
 
+    <!-- Timezone -->
+    <div class="space-y-2">
+      <Label>{{ $t('bots.timezone') }}</Label>
+      <TimezoneSelect
+        :model-value="timezoneModel"
+        :placeholder="$t('bots.timezonePlaceholder')"
+        allow-empty
+        :empty-label="$t('bots.timezoneInherited')"
+        @update:model-value="onTimezoneChange"
+      />
+      <p class="text-xs text-muted-foreground">
+        {{ $t('bots.timezoneInheritedHint') }}
+      </p>
+    </div>
+
     <Separator />
 
     <!-- Max Context Load Time -->
@@ -334,18 +349,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@memohai/ui'
-import { reactive, computed, watch } from 'vue'
+import { reactive, computed, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { useI18n } from 'vue-i18n'
 import ConfirmPopover from '@/components/confirm-popover/index.vue'
+import TimezoneSelect from '@/components/timezone-select/index.vue'
+import { emptyTimezoneValue } from '@/utils/timezones'
 import ModelSelect from './model-select.vue'
 import SearchProviderSelect from './search-provider-select.vue'
 import MemoryProviderSelect from './memory-provider-select.vue'
 import TtsModelSelect from './tts-model-select.vue'
 import BrowserContextSelect from './browser-context-select.vue'
 import { useQuery, useMutation, useQueryCache } from '@pinia/colada'
-import { getBotsByBotIdSettings, putBotsByBotIdSettings, deleteBotsById, getModels, getProviders, getSearchProviders, getMemoryProviders, getTtsProviders, getBrowserContexts, getBotsByBotIdMemoryStatus, postBotsByBotIdMemoryRebuild } from '@memohai/sdk'
+import { getBotsById, putBotsById, getBotsByBotIdSettings, putBotsByBotIdSettings, deleteBotsById, getModels, getProviders, getSearchProviders, getMemoryProviders, getTtsProviders, getBrowserContexts, getBotsByBotIdMemoryStatus, postBotsByBotIdMemoryRebuild } from '@memohai/sdk'
 import type { SettingsSettings } from '@memohai/sdk'
 import type { Ref } from 'vue'
 import { resolveApiErrorMessage } from '@/utils/api-error'
@@ -361,6 +378,15 @@ const botIdRef = computed(() => props.botId) as Ref<string>
 
 // ---- Data ----
 const queryCache = useQueryCache()
+
+const { data: bot } = useQuery({
+  key: () => ['bot', botIdRef.value],
+  query: async () => {
+    const { data } = await getBotsById({ path: { id: botIdRef.value }, throwOnError: true })
+    return data
+  },
+  enabled: () => !!botIdRef.value,
+})
 
 const { data: settings } = useQuery({
   key: () => ['bot-settings', botIdRef.value],
@@ -477,6 +503,31 @@ const form = reactive({
   reasoning_effort: 'medium',
 })
 
+const timezone = ref('')
+
+const timezoneModel = computed(() => timezone.value || emptyTimezoneValue)
+
+function onTimezoneChange(value: string) {
+  timezone.value = value === emptyTimezoneValue ? '' : value
+}
+
+watch(bot, (val) => {
+  if (val) {
+    timezone.value = val.timezone || ''
+  }
+}, { immediate: true })
+
+const { mutateAsync: updateBot } = useMutation({
+  mutation: async ({ id, ...body }: Record<string, unknown> & { id: string }) => {
+    const { data } = await putBotsById({ path: { id }, body, throwOnError: true })
+    return data
+  },
+  onSettled: () => {
+    queryCache.invalidateQueries({ key: ['bots'] })
+    queryCache.invalidateQueries({ key: ['bot'] })
+  },
+})
+
 const selectedMemoryProvider = computed(() =>
   memoryProviders.value.find((provider) => provider.id === form.memory_provider_id),
 )
@@ -590,10 +641,12 @@ watch(settings, (val) => {
 }, { immediate: true })
 
 const hasChanges = computed(() => {
+  const timezoneChanged = timezone.value !== (bot.value?.timezone || '')
   if (!settings.value) return true
   const s = settings.value
   let changed =
-    form.chat_model_id !== (s.chat_model_id ?? '')
+    timezoneChanged
+    || form.chat_model_id !== (s.chat_model_id ?? '')
     || form.title_model_id !== (s.title_model_id ?? '')
     || form.search_provider_id !== (s.search_provider_id ?? '')
     || form.memory_provider_id !== (s.memory_provider_id ?? '')
@@ -609,7 +662,11 @@ const hasChanges = computed(() => {
 
 async function handleSave() {
   try {
-    await updateSettings({ ...form })
+    const promises: Promise<unknown>[] = [updateSettings({ ...form })]
+    if (timezone.value !== (bot.value?.timezone || '')) {
+      promises.push(updateBot({ id: botIdRef.value, timezone: timezone.value }))
+    }
+    await Promise.all(promises)
     toast.success(t('bots.settings.saveSuccess'))
   } catch {
     return

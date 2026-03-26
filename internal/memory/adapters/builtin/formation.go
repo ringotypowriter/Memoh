@@ -39,7 +39,8 @@ func runFormation(ctx context.Context, logger *slog.Logger, llm adapters.LLM, ru
 	result := formationResult{}
 
 	extracted, err := llm.Extract(ctx, adapters.ExtractRequest{
-		Messages: req.Messages,
+		Messages:         req.Messages,
+		TimezoneLocation: req.TimezoneLocation,
 	})
 	if err != nil {
 		logger.Warn("memory formation: extract failed", slog.String("bot_id", botID), slog.Any("error", err))

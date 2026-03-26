@@ -405,6 +405,7 @@ func (a *Agent) assembleTools(ctx context.Context, cfg RunConfig) ([]sdk.Tool, e
 		SupportsImageInput: cfg.SupportsImageInput,
 		IsSubagent:         cfg.Identity.IsSubagent,
 		Skills:             skillsMap,
+		TimezoneLocation:   cfg.Identity.TimezoneLocation,
 	}
 
 	var allTools []sdk.Tool

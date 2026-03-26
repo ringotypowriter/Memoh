@@ -149,34 +149,19 @@
         </div>
 
         <FormField
-          v-slot="{ componentField }"
+          v-slot="{ value, handleChange }"
           name="timezoneId"
         >
           <FormItem>
             <Label>{{ $t('browserContext.timezoneId') }}</Label>
             <FormControl>
-              <Select
-                :model-value="componentField.modelValue || emptyTimezoneValue"
-                @update:model-value="(value) => componentField['onUpdate:modelValue'](value === emptyTimezoneValue ? '' : value)"
-              >
-                <SelectTrigger class="w-full">
-                  <SelectValue :placeholder="$t('browserContext.timezonePlaceholder')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem :value="emptyTimezoneValue">
-                      {{ $t('common.optional') }}
-                    </SelectItem>
-                    <SelectItem
-                      v-for="timezoneOption in timezones"
-                      :key="timezoneOption"
-                      :value="timezoneOption"
-                    >
-                      {{ timezoneOption }}
-                    </SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <TimezoneSelect
+                :model-value="value || emptyTimezoneValue"
+                :placeholder="$t('browserContext.timezonePlaceholder')"
+                allow-empty
+                :empty-label="$t('common.optional')"
+                @update:model-value="(val) => handleChange(val === emptyTimezoneValue ? '' : val)"
+              />
             </FormControl>
           </FormItem>
         </FormField>
@@ -249,12 +234,6 @@ import {
   Label,
   Separator,
   Button,
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Switch,
 } from '@memohai/ui'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -270,7 +249,8 @@ import { toast } from 'vue-sonner'
 import { useDialogMutation } from '@/composables/useDialogMutation'
 import ConfirmPopover from '@/components/confirm-popover/index.vue'
 import { resolveApiErrorMessage } from '@/utils/api-error'
-import { emptyTimezoneValue, timezones } from '@/utils/timezones'
+import { emptyTimezoneValue } from '@/utils/timezones'
+import TimezoneSelect from '@/components/timezone-select/index.vue'
 
 const { t } = useI18n()
 const { run } = useDialogMutation()

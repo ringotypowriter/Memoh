@@ -24,6 +24,7 @@ type AfterChatRequest struct {
 	UserID            string
 	ChannelIdentityID string
 	DisplayName       string
+	TimezoneLocation  *time.Location
 }
 
 // LLM is the interface for LLM operations needed by memory service.
@@ -148,9 +149,10 @@ type DeleteResponse struct {
 }
 
 type ExtractRequest struct {
-	Messages []Message      `json:"messages"`
-	Filters  map[string]any `json:"filters,omitempty"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	Messages         []Message      `json:"messages"`
+	Filters          map[string]any `json:"filters,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	TimezoneLocation *time.Location `json:"-"`
 }
 
 type ExtractResponse struct {

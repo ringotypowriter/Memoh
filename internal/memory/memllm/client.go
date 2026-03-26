@@ -79,7 +79,11 @@ func (c *Client) Extract(ctx context.Context, req adapters.ExtractRequest) (adap
 		return adapters.ExtractResponse{}, nil
 	}
 
-	systemPrompt := strings.ReplaceAll(agent.MemoryExtractPrompt, "{{today}}", time.Now().UTC().Format("2006-01-02"))
+	now := time.Now()
+	if req.TimezoneLocation != nil {
+		now = now.In(req.TimezoneLocation)
+	}
+	systemPrompt := strings.ReplaceAll(agent.MemoryExtractPrompt, "{{today}}", now.Format("2006-01-02"))
 
 	result, err := sdk.GenerateTextResult(ctx,
 		sdk.WithModel(c.model()),

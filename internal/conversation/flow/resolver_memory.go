@@ -69,12 +69,14 @@ func (r *Resolver) storeMemory(ctx context.Context, req conversation.ChatRequest
 	if p == nil {
 		return
 	}
+	_, tzLoc := r.resolveTimezone(ctx, req.BotID, req.UserID)
 	if err := p.OnAfterChat(ctx, memprovider.AfterChatRequest{
 		BotID:             botID,
 		Messages:          memMsgs,
 		UserID:            strings.TrimSpace(req.UserID),
 		ChannelIdentityID: strings.TrimSpace(req.SourceChannelIdentityID),
 		DisplayName:       r.resolveDisplayName(ctx, req),
+		TimezoneLocation:  tzLoc,
 	}); err != nil {
 		r.logger.Warn("memory provider OnAfterChat failed", slog.String("bot_id", botID), slog.Any("error", err))
 	}

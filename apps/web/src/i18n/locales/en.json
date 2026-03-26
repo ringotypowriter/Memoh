@@ -34,7 +34,9 @@
     "loadFailed": "Failed to load",
     "saveFailed": "Failed to save",
     "createdAt": "Created at",
-    "none": "None"
+    "none": "None",
+    "searchTimezone": "Search timezones…",
+    "noTimezoneFound": "No timezone found."
   },
   "auth": {
     "welcome": "Welcome Back",

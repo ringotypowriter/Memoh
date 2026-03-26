@@ -48,29 +48,11 @@
       </div>
       <div class="space-y-2">
         <Label for="settings-timezone">{{ $t('settings.timezone') }}</Label>
-        <Select
+        <TimezoneSelect
           :model-value="timezone"
+          :placeholder="$t('settings.timezonePlaceholder')"
           @update:model-value="onTimezoneChange"
-        >
-          <SelectTrigger
-            id="settings-timezone"
-            class="w-full"
-            :aria-label="$t('settings.timezone')"
-          >
-            <SelectValue :placeholder="$t('settings.timezonePlaceholder')" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              <SelectItem
-                v-for="timezoneOption in timezones"
-                :key="timezoneOption"
-                :value="timezoneOption"
-              >
-                {{ timezoneOption }}
-              </SelectItem>
-            </SelectGroup>
-          </SelectContent>
-        </Select>
+        />
       </div>
       <div class="flex justify-end">
         <Button
@@ -90,16 +72,10 @@ import {
   Button,
   Input,
   Label,
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   Separator,
   Spinner,
 } from '@memohai/ui'
-import { timezones } from '@/utils/timezones'
+import TimezoneSelect from '@/components/timezone-select/index.vue'
 
 defineProps<{
   displayUserId: string

@@ -158,7 +158,7 @@ func (r *Resolver) resolve(ctx context.Context, req conversation.ChatRequest) (r
 		return resolvedContext{}, err
 	}
 	loopDetectionEnabled := r.loadBotLoopDetectionEnabled(ctx, req.BotID)
-	userTimezoneName, userClockLocation := r.resolveUserTimezone(ctx, req.UserID)
+	userTimezoneName, userClockLocation := r.resolveTimezone(ctx, req.BotID, req.UserID)
 
 	var chatSettings conversation.Settings
 	if r.conversationSvc != nil {

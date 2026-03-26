@@ -166,8 +166,8 @@ func (p *HistoryProvider) execListSessions(ctx context.Context, sess SessionCont
 			"platform":          s.ChannelType,
 			"route_id":          s.RouteID,
 			"conversation_type": s.RouteConversationType,
-			"last_active":       s.UpdatedAt.Format(time.RFC3339),
-			"created_at":        s.CreatedAt.Format(time.RFC3339),
+			"last_active":       sess.FormatTime(s.UpdatedAt),
+			"created_at":        sess.FormatTime(s.CreatedAt),
 		}
 
 		if m := s.RouteMetadata; len(m) > 0 {
@@ -261,7 +261,7 @@ func (p *HistoryProvider) execSearchMessages(ctx context.Context, sess SessionCo
 			"session_id": row.SessionID.String(),
 			"role":       row.Role,
 			"text":       text,
-			"created_at": row.CreatedAt.Time.Format(time.RFC3339),
+			"created_at": sess.FormatTime(row.CreatedAt.Time),
 		}
 		if dbpkg.TextToString(row.Platform) != "" {
 			entry["platform"] = dbpkg.TextToString(row.Platform)

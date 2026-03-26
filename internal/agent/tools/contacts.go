@@ -67,7 +67,7 @@ func (p *ContactsProvider) Tools(_ context.Context, session SessionContext) ([]s
 						"conversation_type": r.ConversationType,
 						"target":            r.ReplyTarget,
 						"conversation_id":   r.ConversationID,
-						"last_active":       r.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+						"last_active":       sess.FormatTime(r.UpdatedAt),
 					}
 					if len(r.Metadata) > 0 {
 						if v, ok := r.Metadata["conversation_name"].(string); ok && v != "" {
