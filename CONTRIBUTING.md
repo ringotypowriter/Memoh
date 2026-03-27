@@ -40,9 +40,14 @@ Default host ports are shifted away from the production compose stack: Web `1808
 
 ```bash
 mise run dev             # Start all services
+mise run dev:selinux     # Start all services on SELinux hosts
 mise run dev:down        # Stop all services
+mise run dev:down:selinux # Stop SELinux dev environment
 mise run dev:logs        # View logs
+mise run dev:logs:selinux # View logs on SELinux hosts
 mise run dev:restart -- server  # Restart a specific service
+mise run dev:restart:selinux -- server  # Restart a service on SELinux hosts
+mise run bridge:build:selinux  # Rebuild bridge binary on SELinux hosts
 ```
 
 ## More Commands
@@ -50,9 +55,14 @@ mise run dev:restart -- server  # Restart a specific service
 | Command | Description |
 | ------- | ----------- |
 | `mise run dev` | Start containerized dev environment |
+| `mise run dev:selinux` | Start dev environment with SELinux compose overrides |
 | `mise run dev:down` | Stop dev environment |
+| `mise run dev:down:selinux` | Stop SELinux dev environment |
 | `mise run dev:logs` | View dev logs |
+| `mise run dev:logs:selinux` | View dev logs on SELinux hosts |
 | `mise run dev:restart` | Restart a service (e.g. `-- server`) |
+| `mise run dev:restart:selinux` | Restart a service on SELinux hosts |
+| `mise run bridge:build:selinux` | Rebuild bridge binary in SELinux dev container |
 | `mise run setup` | Install deps and prepare local tooling |
 | `mise run db-up` | Run database migrations |
 | `mise run db-down` | Roll back database migrations |
