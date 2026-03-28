@@ -46,7 +46,7 @@
             ref="scrollContainer"
             class="h-full"
           >
-            <div class="w-full max-w-4xl mx-auto px-1 sm:px-2 py-6 space-y-6">
+            <div class="w-full max-w-4xl mx-auto px-10 py-6 space-y-6">
               <!-- Load older indicator -->
               <div
                 v-if="loadingOlder"
