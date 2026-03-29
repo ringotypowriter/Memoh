@@ -1,23 +1,24 @@
 <template>
-  <div class="flex-1 flex flex-col h-full">
-    <!-- No bot selected -->
-    <div
-      v-if="!currentBotId"
-      class="flex-1 flex items-center justify-center"
-    >
-      <div class="text-center">
-        <p class="text-xs font-medium text-foreground">
-          {{ $t('chat.selectBot') }}
-        </p>
-        <p class="mt-1 text-xs text-muted-foreground">
-          {{ $t('chat.selectBotHint') }}
-        </p>
+  <div class="flex-1 flex h-full min-w-0">
+    <div class="flex-1 flex flex-col h-full min-w-0">
+      <!-- No bot selected -->
+      <div
+        v-if="!currentBotId"
+        class="flex-1 flex items-center justify-center"
+      >
+        <div class="text-center">
+          <p class="text-xs font-medium text-foreground">
+            {{ $t('chat.selectBot') }}
+          </p>
+          <p class="mt-1 text-xs text-muted-foreground">
+            {{ $t('chat.selectBotHint') }}
+          </p>
+        </div>
       </div>
-    </div>
 
-    <template v-else>
-      <!-- Session header -->
-      <!-- <div class="border-b px-4 py-2 flex items-center justify-between min-h-12">
+      <template v-else>
+        <!-- Session header -->
+        <!-- <div class="border-b px-4 py-2 flex items-center justify-between min-h-12">
         <div class="flex items-center gap-2 min-w-0">
           <h2 class="text-xs font-medium truncate">
             {{ activeSession?.title || $t('chat.untitledSession') }}
@@ -39,176 +40,194 @@
         </div>
       </div> -->
 
-      <!-- Messages -->
-      <section class="flex-1 relative w-full px-3 sm:px-5 lg:px-8">
-        <section class="absolute inset-0">
-          <ScrollArea
-            ref="scrollContainer"
-            class="h-full"
-          >
-            <div class="w-full max-w-4xl mx-auto px-10 py-6 space-y-6">
-              <!-- Load older indicator -->
-              <div
-                v-if="loadingOlder"
-                class="flex justify-center py-2"
-              >
-                <LoaderCircle
-                  class="size-3.5 animate-spin text-muted-foreground"
-                />
-              </div>
-
-              <!-- Empty state -->
-              <div
-                v-if="messages.length === 0 && !loadingChats"
-                class="flex items-center justify-center min-h-[300px]"
-              >
-                <p class="text-muted-foreground text-xs">
-                  {{ $t('chat.greeting') }}
-                </p>
-              </div>
-
-              <!-- Message list -->
-              <MessageItem
-                v-for="msg in messages"
-                :key="msg.id"
-                :message="msg"
-                :on-open-media="galleryOpenBySrc"
-              />
-            </div>
-          </ScrollArea>
-        </section>
-      </section>
-
-
-      <!-- Media gallery lightbox -->
-      <MediaGalleryLightbox
-        :items="galleryItems"
-        :open-index="galleryOpenIndex"
-        @update:open-index="gallerySetOpenIndex"
-      />
-
-      <!-- Input -->
-      <div class="px-3 sm:px-5 lg:px-8 py-2.5">
-        <div class="w-full max-w-4xl mx-auto">
-          <!-- Pending attachment previews -->
-          <div
-            v-if="pendingFiles.length"
-            class="flex flex-wrap gap-2 mb-2"
-          >
-            <div
-              v-for="(file, i) in pendingFiles"
-              :key="i"
-              class="relative group flex items-center gap-1.5 px-2 py-1 rounded-md border bg-muted/40 text-xs"
+        <!-- Messages -->
+        <section class="flex-1 relative w-full px-3 sm:px-5 lg:px-8">
+          <section class="absolute inset-0">
+            <ScrollArea
+              ref="scrollContainer"
+              class="h-full"
             >
-              <component
-                :is="file.type.startsWith('image/') ? ImageIcon : FileIcon"
-                class="size-3 text-muted-foreground"
-              />
-              <span class="truncate max-w-30">{{ file.name }}</span>
-              <button
-                type="button"
-                class="ml-1 text-muted-foreground hover:text-foreground"
-                :aria-label="`${$t('common.delete')}: ${file.name}`"
-                @click="pendingFiles.splice(i, 1)"
-              >
-                <X
-                  class="size-3"
-                />
-              </button>
-            </div>
-          </div>
-
-          <input
-            ref="fileInput"
-            type="file"
-            multiple
-            class="hidden"
-            @change="handleFileInputChange"
-          >
-          <section>
-            <InputGroup class="bg-transparent overflow-hidden shadow-none! ring-0! border-border!">
-              <InputGroupTextarea
-                v-model="inputText"
-                class="min-h-14 max-h-14 text-xs resize-none break-all!"                
-                :placeholder="activeChatReadOnly ? $t('chat.readonlyHint') : $t('chat.inputPlaceholder')"
-                :disabled="!currentBotId || activeChatReadOnly"
-                style="scrollbar-width: none;"
-                @keydown.enter.exact="handleKeydown"
-                @paste="handlePaste"
-              />
-              <InputGroupAddon
-                align="block-end"
-                class="items-center py-1.5"
-              >
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  :disabled="!currentBotId || activeChatReadOnly || streaming"
-                  aria-label="Attach files"
-                  @click="fileInput?.click()"
-                >
-                  <Paperclip
-                    class="size-3.5"
-                  />
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  :disabled="!currentBotId"
-                  :aria-label="$t('chat.files')"
-                  @click="fileManagerOpen = true"
-                >
-                  <FolderOpen
-                    class="size-3.5"
-                  />
-                </Button>
-                <Button
-                  v-if="!streaming"
-                  type="button"
-                  size="icon"
-                  :disabled="(!inputText.trim() && !pendingFiles.length) || !currentBotId || activeChatReadOnly"
-                  aria-label="Send message"
-                  class="ml-auto size-7 rounded-full bg-[#8B56E3] text-white"
-                  @click="handleSend"
-                >
-                  <Send
-                    class="size-3"
-                  />
-                </Button>
-                <Button
-                  v-else
-                  type="button"
-                  size="icon"
-                  variant="destructive"
-                  class="ml-auto size-7 rounded-full"
-                  aria-label="Stop generating response"
-                  @click="chatStore.abort()"
+              <div class="w-full max-w-4xl mx-auto px-10 py-6 space-y-6">
+                <!-- Load older indicator -->
+                <div
+                  v-if="loadingOlder"
+                  class="flex justify-center py-2"
                 >
                   <LoaderCircle
-                    class="size-3.5 animate-spin"
+                    class="size-3.5 animate-spin text-muted-foreground"
                   />
-                </Button>
-              </InputGroupAddon>
-            </InputGroup>
-          </section>
-        </div>
-      </div>
-    </template>
+                </div>
 
-    <!-- File manager sheet -->
-    <Sheet v-model:open="fileManagerOpen">
-      <SheetContent
-        side="right"
-        class="sm:max-w-2xl w-full p-0 flex flex-col"
+                <!-- Empty state -->
+                <div
+                  v-if="messages.length === 0 && !loadingChats"
+                  class="flex items-center justify-center min-h-[300px]"
+                >
+                  <p class="text-muted-foreground text-xs">
+                    {{ $t('chat.greeting') }}
+                  </p>
+                </div>
+
+                <!-- Message list -->
+                <MessageItem
+                  v-for="msg in messages"
+                  :key="msg.id"
+                  :message="msg"
+                  :on-open-media="galleryOpenBySrc"
+                />
+              </div>
+            </ScrollArea>
+          </section>
+        </section>
+
+
+        <!-- Media gallery lightbox -->
+        <MediaGalleryLightbox
+          :items="galleryItems"
+          :open-index="galleryOpenIndex"
+          @update:open-index="gallerySetOpenIndex"
+        />
+
+        <!-- Input -->
+        <div class="px-3 sm:px-5 lg:px-8 py-2.5">
+          <div class="w-full max-w-4xl mx-auto">
+            <!-- Pending attachment previews -->
+            <div
+              v-if="pendingFiles.length"
+              class="flex flex-wrap gap-2 mb-2"
+            >
+              <div
+                v-for="(file, i) in pendingFiles"
+                :key="i"
+                class="relative group flex items-center gap-1.5 px-2 py-1 rounded-md border bg-muted/40 text-xs"
+              >
+                <component
+                  :is="file.type.startsWith('image/') ? ImageIcon : FileIcon"
+                  class="size-3 text-muted-foreground"
+                />
+                <span class="truncate max-w-30">{{ file.name }}</span>
+                <button
+                  type="button"
+                  class="ml-1 text-muted-foreground hover:text-foreground"
+                  :aria-label="`${$t('common.delete')}: ${file.name}`"
+                  @click="pendingFiles.splice(i, 1)"
+                >
+                  <X
+                    class="size-3"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <input
+              ref="fileInput"
+              type="file"
+              multiple
+              class="hidden"
+              @change="handleFileInputChange"
+            >
+            <section>
+              <InputGroup class="bg-transparent overflow-hidden shadow-none! ring-0! border-border!">
+                <InputGroupTextarea
+                  v-model="inputText"
+                  class="min-h-14 max-h-14 text-xs resize-none break-all!"                
+                  :placeholder="activeChatReadOnly ? $t('chat.readonlyHint') : $t('chat.inputPlaceholder')"
+                  :disabled="!currentBotId || activeChatReadOnly"
+                  style="scrollbar-width: none;"
+                  @keydown.enter.exact="handleKeydown"
+                  @paste="handlePaste"
+                />
+                <InputGroupAddon
+                  align="block-end"
+                  class="items-center py-1.5"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    :disabled="!currentBotId || activeChatReadOnly || streaming"
+                    aria-label="Attach files"
+                    @click="fileInput?.click()"
+                  >
+                    <Paperclip
+                      class="size-3.5"
+                    />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    :disabled="!currentBotId"
+                    :aria-label="$t('chat.files')"
+                    @click="fileManagerOpen = true"
+                  >
+                    <FolderOpen
+                      class="size-3.5"
+                    />
+                  </Button>
+                  <Button
+                    v-if="!streaming"
+                    type="button"
+                    size="icon"
+                    :disabled="(!inputText.trim() && !pendingFiles.length) || !currentBotId || activeChatReadOnly"
+                    aria-label="Send message"
+                    class="ml-auto size-7 rounded-full bg-[#8B56E3] text-white"
+                    @click="handleSend"
+                  >
+                    <Send
+                      class="size-3"
+                    />
+                  </Button>
+                  <Button
+                    v-else
+                    type="button"
+                    size="icon"
+                    variant="destructive"
+                    class="ml-auto size-7 rounded-full"
+                    aria-label="Stop generating response"
+                    @click="chatStore.abort()"
+                  >
+                    <LoaderCircle
+                      class="size-3.5 animate-spin"
+                    />
+                  </Button>
+                </InputGroupAddon>
+              </InputGroup>
+            </section>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- File manager panel -->
+    <div
+      v-if="fileManagerOpen"
+      class="flex shrink-0 h-full relative"
+      :style="{ width: `${fileManagerWidth}px` }"
+    >
+      <div
+        class="absolute top-0 left-0 w-1 h-full cursor-col-resize z-10 group"
+        @mousedown="onFmResizeStart"
       >
-        <SheetHeader class="px-4 pt-4 pb-0">
-          <SheetTitle>{{ $t('chat.files') }}</SheetTitle>
-          <SheetDescription class="sr-only">
-            {{ $t('chat.files') }}
-          </SheetDescription>
-        </SheetHeader>
+        <div
+          class="w-full h-full transition-colors group-hover:bg-primary/20"
+          :class="{ 'bg-primary/30': isFmResizing }"
+        />
+      </div>
+
+      <div class="flex flex-col h-full flex-1 min-w-0 border-l border-border bg-sidebar">
+        <div class="flex items-center justify-between px-4 h-12 shrink-0">
+          <span class="text-sm font-medium text-foreground">{{ $t('chat.files') }}</span>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            class="size-6"
+            @click="fileManagerOpen = false"
+          >
+            <X class="size-3.5" />
+          </Button>
+        </div>
         <div class="flex-1 min-h-0 relative">
           <FileManager
             v-if="currentBotId"
@@ -217,15 +236,16 @@
             :sync-url="false"
           />
         </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick, onMounted, provide, useTemplateRef, watchEffect} from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, provide, useTemplateRef, watchEffect } from 'vue'
+import { useLocalStorage } from '@vueuse/core'
 import { LoaderCircle, Image as ImageIcon, File as FileIcon, X, Paperclip, FolderOpen, Send } from 'lucide-vue-next'
-import { ScrollArea, Button, InputGroup, InputGroupAddon, InputGroupTextarea, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@memohai/ui'
+import { ScrollArea, Button, InputGroup, InputGroupAddon, InputGroupTextarea } from '@memohai/ui'
 import { useChatStore } from '@/store/chat-list'
 import { storeToRefs } from 'pinia'
 import MessageItem from './message-item.vue'
@@ -241,6 +261,43 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const pendingFiles = ref<File[]>([])
 const fileManagerOpen = ref(false)
 const fileManagerRef = ref<InstanceType<typeof FileManager> | null>(null)
+
+const FM_MIN_WIDTH = 320
+const FM_MAX_WIDTH = 800
+const FM_DEFAULT_WIDTH = 520
+
+const fileManagerWidth = useLocalStorage('file-manager-panel-width', FM_DEFAULT_WIDTH)
+const isFmResizing = ref(false)
+
+function onFmResizeStart(e: MouseEvent) {
+  e.preventDefault()
+  isFmResizing.value = true
+  const startX = e.clientX
+  const startWidth = fileManagerWidth.value
+
+  function onMouseMove(ev: MouseEvent) {
+    const delta = startX - ev.clientX
+    fileManagerWidth.value = Math.min(FM_MAX_WIDTH, Math.max(FM_MIN_WIDTH, startWidth + delta))
+  }
+
+  function onMouseUp() {
+    isFmResizing.value = false
+    document.removeEventListener('mousemove', onMouseMove)
+    document.removeEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onMouseMove)
+  document.addEventListener('mouseup', onMouseUp)
+}
+
+onBeforeUnmount(() => {
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+})
 
 const FILE_MANAGER_ROOT = '/data'
 
