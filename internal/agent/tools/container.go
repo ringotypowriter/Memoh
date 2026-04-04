@@ -70,12 +70,13 @@ func (p *ContainerProvider) Tools(_ context.Context, session SessionContext) ([]
 		},
 		{
 			Name:        "list",
-			Description: fmt.Sprintf("List directory entries inside the bot container. Supports pagination. Max %d entries per call. In recursive mode, subdirectories with >%d items are collapsed to a summary.", listMaxEntries, listCollapseThreshold),
+			Description: fmt.Sprintf("List directory entries inside the bot container. Supports pagination. Max %d entries per call. In recursive mode, max depth is %d (default %d) and subdirectories with >%d items are collapsed to a summary.", listMaxEntries, listMaxDepth, listDefaultDepth, listCollapseThreshold),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"path":      map[string]any{"type": "string", "description": fmt.Sprintf("Directory path (relative to %s or absolute inside container)", wd)},
 					"recursive": map[string]any{"type": "boolean", "description": "List recursively"},
+					"max_depth": map[string]any{"type": "integer", "description": fmt.Sprintf("Max directory depth for recursive listing (1-%d). Default: %d.", listMaxDepth, listDefaultDepth), "minimum": 1, "maximum": listMaxDepth, "default": listDefaultDepth},
 					"offset":    map[string]any{"type": "integer", "description": "Entry offset to start from (0-indexed). Default: 0.", "minimum": 0, "default": 0},
 					"limit":     map[string]any{"type": "integer", "description": fmt.Sprintf("Max entries to return per call. Default: %d. Max: %d.", listMaxEntries, listMaxEntries), "minimum": 1, "maximum": listMaxEntries, "default": listMaxEntries},
 				},
@@ -247,11 +248,24 @@ func (p *ContainerProvider) execList(ctx context.Context, session SessionContext
 	}
 
 	var collapseThreshold int32
+	var maxDepth int32
 	if recursive {
 		collapseThreshold = listCollapseThreshold
+		maxDepth = listDefaultDepth
+		if v, ok, err := IntArg(args, "max_depth"); err != nil {
+			return nil, fmt.Errorf("invalid max_depth: %w", err)
+		} else if ok {
+			if v < 1 {
+				return nil, errors.New("max_depth must be >= 1")
+			}
+			if v > listMaxDepth {
+				v = listMaxDepth
+			}
+			maxDepth = int32(v) //nolint:gosec // bounded by listMaxDepth
+		}
 	}
 
-	result, err := client.ListDir(ctx, dirPath, recursive, offset, limit, collapseThreshold)
+	result, err := client.ListDir(ctx, dirPath, recursive, offset, limit, collapseThreshold, maxDepth)
 	if err != nil {
 		return nil, err
 	}

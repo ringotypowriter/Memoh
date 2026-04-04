@@ -28,6 +28,8 @@ const (
 	readMaxBytes     = 5120
 	readMaxLineLen   = 1000
 	listMaxEntries   = 200
+	listMaxDepth     = 5
+	listMaxCollected = 10_000
 	binaryProbeBytes = 8 * 1024
 	rawChunkSize     = 64 * 1024
 	defaultWorkDir   = "/data"
@@ -137,8 +139,16 @@ func (*containerServer) ListDir(_ context.Context, req *pb.ListDirRequest) (*pb.
 	dir = resolvePath(dir)
 
 	var all []*pb.FileEntry
+	walkCapped := false
 
 	if req.GetRecursive() {
+		maxDepth := int(req.GetMaxDepth())
+		if maxDepth < 0 {
+			maxDepth = 0
+		}
+		if maxDepth > listMaxDepth {
+			maxDepth = listMaxDepth
+		}
 		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil // skip errors
@@ -147,9 +157,32 @@ func (*containerServer) ListDir(_ context.Context, req *pb.ListDirRequest) (*pb.
 			if rel == "." {
 				return nil
 			}
+			if maxDepth > 0 && d.IsDir() {
+				depth := strings.Count(rel, string(filepath.Separator)) + 1
+				if depth > maxDepth {
+					return fs.SkipDir
+				}
+				// Record the directory but don't descend — children would
+				// exceed maxDepth and be discarded anyway.
+				if depth == maxDepth {
+					entry, _ := buildFileEntry(rel, p, d)
+					if entry != nil {
+						all = append(all, entry)
+						if len(all) >= listMaxCollected {
+							walkCapped = true
+							return filepath.SkipAll
+						}
+					}
+					return fs.SkipDir
+				}
+			}
 			entry, _ := buildFileEntry(rel, p, d)
 			if entry != nil {
 				all = append(all, entry)
+			}
+			if len(all) >= listMaxCollected {
+				walkCapped = true
+				return filepath.SkipAll
 			}
 			return nil
 		})
@@ -179,14 +212,10 @@ func (*containerServer) ListDir(_ context.Context, req *pb.ListDirRequest) (*pb.
 		offset = 0
 	}
 	limit := req.GetLimit()
-	if limit < 0 {
-		limit = 0
-	}
 	if limit > listMaxEntries {
 		limit = listMaxEntries
 	}
 
-	// limit=0 means no limit (return all entries from offset)
 	var entries []*pb.FileEntry
 	if int(offset) < len(all) {
 		entries = all[offset:]
@@ -195,7 +224,7 @@ func (*containerServer) ListDir(_ context.Context, req *pb.ListDirRequest) (*pb.
 		entries = entries[:limit]
 	}
 
-	truncated := int(offset)+len(entries) < int(totalCount)
+	truncated := walkCapped || int(offset)+len(entries) < int(totalCount)
 	return &pb.ListDirResponse{
 		Entries:    entries,
 		TotalCount: totalCount,

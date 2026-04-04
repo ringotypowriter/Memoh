@@ -42,6 +42,7 @@ message ListDirRequest {
   int32 offset = 3;
   int32 limit = 4;
   int32 collapse_threshold = 5;
+  int32 max_depth = 6;
 }
 
 message FileEntry {

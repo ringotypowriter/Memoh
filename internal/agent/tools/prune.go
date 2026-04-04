@@ -20,6 +20,8 @@ const (
 
 	listMaxEntries        = 200
 	listCollapseThreshold = 50
+	listMaxDepth          = 5
+	listDefaultDepth      = 3
 )
 
 func pruneToolOutputText(text, label string) string {

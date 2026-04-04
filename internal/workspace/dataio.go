@@ -403,9 +403,13 @@ func (m *Manager) exportDataViaGRPC(ctx context.Context, botID string) (io.ReadC
 		return nil, fmt.Errorf("grpc connect: %w", err)
 	}
 
-	entries, err := client.ListDirAll(ctx, containerDataDir, true)
+	entries, truncated, err := client.ListDirAll(ctx, containerDataDir, true)
 	if err != nil {
 		return nil, fmt.Errorf("list dir: %w", err)
+	}
+	if truncated {
+		m.logger.Warn("recursive listing truncated during export, archive may be incomplete",
+			slog.String("bot_id", botID), slog.Int("entries_collected", len(entries)))
 	}
 
 	pr, pw := io.Pipe()

@@ -85,13 +85,14 @@ type ListDirResult struct {
 	Truncated  bool
 }
 
-func (c *Client) ListDir(ctx context.Context, path string, recursive bool, offset, limit, collapseThreshold int32) (*ListDirResult, error) {
+func (c *Client) ListDir(ctx context.Context, path string, recursive bool, offset, limit, collapseThreshold, maxDepth int32) (*ListDirResult, error) {
 	resp, err := c.svc.ListDir(ctx, &pb.ListDirRequest{
 		Path:              path,
 		Recursive:         recursive,
 		Offset:            offset,
 		Limit:             limit,
 		CollapseThreshold: collapseThreshold,
+		MaxDepth:          maxDepth,
 	})
 	if err != nil {
 		return nil, mapError(err)
@@ -103,13 +104,16 @@ func (c *Client) ListDir(ctx context.Context, path string, recursive bool, offse
 	}, nil
 }
 
-// ListDirAll lists all entries without pagination (offset=0, limit=0, no collapsing).
-func (c *Client) ListDirAll(ctx context.Context, path string, recursive bool) ([]*pb.FileEntry, error) {
-	result, err := c.ListDir(ctx, path, recursive, 0, 0, 0)
+// ListDirAll lists all entries in a single server call (limit=0 means no pagination).
+// It passes maxDepth=0 (unlimited) so internal callers get the full tree.
+// The returned truncated flag is true when the server walk hit its internal cap
+// and the listing is incomplete.
+func (c *Client) ListDirAll(ctx context.Context, path string, recursive bool) (entries []*pb.FileEntry, truncated bool, err error) {
+	result, err := c.ListDir(ctx, path, recursive, 0, 0, 0, 0)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return result.Entries, nil
+	return result.Entries, result.Truncated, nil
 }
 
 func (c *Client) Stat(ctx context.Context, path string) (*pb.FileEntry, error) {
